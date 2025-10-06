@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual env
+.venv/
+
+# Data, checkpoints, outputs
+data/
+outputs/
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
