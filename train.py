@@ -1,12 +1,23 @@
 import torch
 import torch.nn as nn
+import torch.optim as optim
 
 def train_with_gradient_tracking(model, trainloader, testloader, 
                                 epochs, ln_rate,
-                                optimizer, device):
+                                optimizer, device,
+                                layer_lns: dict | None = None,
+):
     
     model = model.to(device)
-    optimizer = optimizer(model.parameters(), lr=ln_rate)
+    
+    if layer_lns:
+        groups = [
+            {'params': getattr(model, name).parameters(), 'lr': lr}
+            for name, lr in layer_lns.items()
+        ]
+        opt = optimizer(groups)  # per-group lrs set above
+    else:
+        opt = optimizer(model.parameters(), lr=ln_rate)
     criterion = nn.CrossEntropyLoss()
 
     history = {
@@ -34,7 +45,7 @@ def train_with_gradient_tracking(model, trainloader, testloader,
         for batch_idx, (data, target) in enumerate(trainloader):
             data, target = data.to(device), target.to(device)
             
-            optimizer.zero_grad()
+            opt.zero_grad()
             output = model(data)
             loss = criterion(output, target)
             loss.backward()
@@ -54,7 +65,7 @@ def train_with_gradient_tracking(model, trainloader, testloader,
                 first_batch = False
                 print("logged grads for epoch ", epoch + 1)
 
-            optimizer.step()
+            opt.step()
 
             # track metrics
             train_loss += loss.item()

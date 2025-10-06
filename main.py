@@ -19,10 +19,12 @@ print(f"Using device: {device}")
 n_epochs = 20
 batch_size = 128
 ln_rate = 0.01
-optimizer = Adam
+opt = Adam
 input_size = 784
 hidden_sizes = [128, 64]
 output_size = 10
+layer_lns = {'layer1': 0.01, 'layer2': 0.001, 'layer3': 0.001}
+
 run_id = datetime.now().strftime('%Y%m%d_%H%M%S')
 save_dir = os.path.join(os.getcwd(), 'outputs', run_id)
 
@@ -37,8 +39,9 @@ history = train_with_gradient_tracking(
     train_loader,
     test_loader,
     epochs=n_epochs,
-    optimizer=optimizer,
+    optimizer=opt,
     ln_rate=ln_rate,
+    layer_lns=layer_lns,
     device = device
 )
     
