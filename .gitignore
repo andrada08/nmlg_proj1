@@ -5,9 +5,10 @@ __pycache__/
 # Virtual env
 .venv/
 
-# Data, checkpoints, outputs
+# Data, checkpoints, outputs, configs
 data/
 outputs/
+configs/
 
 # OS/editor
 .DS_Store
