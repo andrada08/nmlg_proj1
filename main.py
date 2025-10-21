@@ -33,7 +33,7 @@ with open(config_path, 'r') as f:
 # Unpack
 n_epochs = cfg['n_epochs']
 batch_size = cfg['batch_size']
-ln_rate = cfg['ln_rate']
+ln_rate = cfg.get('ln_rate', None)
 opt = getattr(optim, cfg["optimizer"])
 input_size = cfg['input_size']
 hidden_sizes = cfg['hidden_sizes']
@@ -75,4 +75,33 @@ history = train_with_gradient_tracking(
 # plot
 print(f"\nPlotting results...")
 visualize_loss_and_accuracy(history, save_dir=save_dir)
-visualize_gradients(history, model.get_layer_names(), save_dir=save_dir)
+
+# Create layer info for gradient plot labels
+layer_info = {}
+hidden_sizes = cfg['hidden_sizes']
+layer_sizes = [input_size] + hidden_sizes + [hidden_sizes[0] + hidden_sizes[1]]  # [784, h1, h2, h1+h2]
+layer_names = model.get_layer_names()
+
+for i, layer_name in enumerate(layer_names):
+    layer_info[layer_name] = {
+        'size': layer_sizes[i],
+        'lr': layer_lns[layer_name] if layer_lns else ln_rate
+    }
+
+visualize_gradients(history, model.get_layer_names(), layer_info=layer_info, save_dir=save_dir)
+
+# Save gradient metrics to file (include final accuracy)
+metrics_data = history['gradient_metrics'].copy()
+metrics_data['final_test_accuracy'] = history['test_accuracy'][-1] if history['test_accuracy'] else 0.0
+metrics_data['final_train_accuracy'] = history['accuracy'][-1] if history['accuracy'] else 0.0
+
+metrics_file = os.path.join(save_dir, 'gradient_metrics.json')
+with open(metrics_file, 'w') as f:
+    json.dump(metrics_data, f, indent=2)
+print(f"\nGradient metrics saved to: {metrics_file}")
+
+# Also print a summary
+print(f"\nGradient Metrics Summary:")
+print(f"Patterns detected: {sum(history['gradient_metrics'].values())} out of {len(history['gradient_metrics'])}")
+print(f"Large drops: L1={history['gradient_metrics']['layer1_large_drop']}, L2={history['gradient_metrics']['layer2_large_drop']}, L3={history['gradient_metrics']['layer3_large_drop']}")
+print(f"Switches: 1-2={history['gradient_metrics']['switches_12']}, 1-3={history['gradient_metrics']['switches_13']}, 2-3={history['gradient_metrics']['switches_23']}")

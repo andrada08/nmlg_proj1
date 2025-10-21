@@ -1,11 +1,17 @@
 import matplotlib.pyplot as plt
 import os
 
-def visualize_gradients(history, layer_names, save_dir=None):
+def visualize_gradients(history, layer_names, layer_info=None, save_dir=None):
     epochs = history['gradients']['epoch']
     plt.figure(figsize=(10, 6))
     for layer_name in layer_names:
-        plt.plot(epochs, history['gradients'][layer_name], label=layer_name)
+        if layer_info and layer_name in layer_info:
+            # Create descriptive label with size and learning rate
+            info = layer_info[layer_name]
+            label = f"{layer_name} (size={info['size']}, lr={info['lr']:.2e})"
+        else:
+            label = layer_name
+        plt.plot(epochs, history['gradients'][layer_name], label=label)
     plt.title('Gradient Norms by Layer')
     plt.xlabel('Epoch')
     plt.ylabel('Gradient Norm')
