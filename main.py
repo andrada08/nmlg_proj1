@@ -9,7 +9,6 @@ import shutil
 from nets import Net
 from train import train_with_gradient_tracking
 from load_data import load_data
-from visualize import visualize_gradients, visualize_loss_and_accuracy
 
 np.random.seed(0)
 torch.manual_seed(0)
@@ -43,12 +42,13 @@ activation = cfg['activation']
 
 # define output folder: use config filename as folder name
 base_tag = os.path.splitext(os.path.basename(config_path))[0]
-save_dir = os.path.join(os.getcwd(), 'outputs', base_tag)
-if os.path.exists(save_dir):
-    i = 2
-    while os.path.exists(f"{save_dir}_{i}"):
-        i += 1
-    save_dir = f"{save_dir}_{i}"
+
+# Get output subfolder from environment variable (set by run_sweep.py)
+output_subfolder = os.environ.get('OUTPUT_SUBFOLDER', '')
+if output_subfolder:
+    save_dir = os.path.join(os.getcwd(), 'outputs', output_subfolder, base_tag)
+else:
+    save_dir = os.path.join(os.getcwd(), 'outputs', base_tag)
 
 os.makedirs(save_dir, exist_ok=True)
 shutil.copy2(config_path, os.path.join(save_dir, 'config.json'))
@@ -72,36 +72,18 @@ history = train_with_gradient_tracking(
     device = device
 )
 
-# plot
-print(f"\nPlotting results...")
-visualize_loss_and_accuracy(history, save_dir=save_dir)
+# Note: gradient_metrics removed - now computed post-hoc in analyze_results.py
+# Only saving training history which contains all gradient data
 
-# Create layer info for gradient plot labels
-layer_info = {}
-hidden_sizes = cfg['hidden_sizes']
-layer_sizes = [input_size] + hidden_sizes + [hidden_sizes[0] + hidden_sizes[1]]  # [784, h1, h2, h1+h2]
-layer_names = model.get_layer_names()
+# Save full training history for analysis and plot regeneration
+history_file = os.path.join(save_dir, 'training_history.json')
+with open(history_file, 'w') as f:
+    json.dump(history, f, indent=2)
+print(f"Training history saved to: {history_file}")
 
-for i, layer_name in enumerate(layer_names):
-    layer_info[layer_name] = {
-        'size': layer_sizes[i],
-        'lr': layer_lns[layer_name] if layer_lns else ln_rate
-    }
-
-visualize_gradients(history, model.get_layer_names(), layer_info=layer_info, save_dir=save_dir)
-
-# Save gradient metrics to file (include final accuracy)
-metrics_data = history['gradient_metrics'].copy()
-metrics_data['final_test_accuracy'] = history['test_accuracy'][-1] if history['test_accuracy'] else 0.0
-metrics_data['final_train_accuracy'] = history['accuracy'][-1] if history['accuracy'] else 0.0
-
-metrics_file = os.path.join(save_dir, 'gradient_metrics.json')
-with open(metrics_file, 'w') as f:
-    json.dump(metrics_data, f, indent=2)
-print(f"\nGradient metrics saved to: {metrics_file}")
-
-# Also print a summary
-print(f"\nGradient Metrics Summary:")
-print(f"Patterns detected: {sum(history['gradient_metrics'].values())} out of {len(history['gradient_metrics'])}")
-print(f"Large drops: L1={history['gradient_metrics']['layer1_large_drop']}, L2={history['gradient_metrics']['layer2_large_drop']}, L3={history['gradient_metrics']['layer3_large_drop']}")
-print(f"Switches: 1-2={history['gradient_metrics']['switches_12']}, 1-3={history['gradient_metrics']['switches_13']}, 2-3={history['gradient_metrics']['switches_23']}")
+# Print final accuracy
+final_test_acc = history['test_accuracy'][-1] if history['test_accuracy'] else 0.0
+final_train_acc = history['accuracy'][-1] if history['accuracy'] else 0.0
+print(f"\nTraining complete!")
+print(f"Final test accuracy: {final_test_acc:.2f}%")
+print(f"Final train accuracy: {final_train_acc:.2f}%")
