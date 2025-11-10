@@ -5,13 +5,14 @@ __pycache__/
 # Virtual env
 .venv/
 
-# Data, checkpoints, outputs, configs
+# Data, checkpoints, outputs, configs, results
 data/
 outputs/
 configs/
+results/
 
 # OS/editor
 .DS_Store
 .vscode/
 .idea/
-results/
+
