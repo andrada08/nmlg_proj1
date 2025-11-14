@@ -5,7 +5,29 @@ import seaborn as sns
 import numpy as np
 import sys
 import os
+import re
 from pathlib import Path
+
+LAYER_COLOR_MAP = {
+    'layer1': '#FFC300',  # yellow/gold
+    'layer2': '#FF69B4',  # pink
+    'layer3': '#6EC5FF',  # lighter blue
+    'layer4': '#2ca02c',  # green
+    'layer5': '#9467bd',
+    'layer6': '#8c564b',
+}
+DEFAULT_LAYER_COLORS = list(LAYER_COLOR_MAP.values())
+
+
+def get_layer_color(layer_name: str) -> str:
+    if layer_name in LAYER_COLOR_MAP:
+        return LAYER_COLOR_MAP[layer_name]
+    # Fallback: assign deterministically based on numeric suffix or hash
+    match = re.search(r'layer(\d+)', layer_name)
+    if match:
+        idx = int(match.group(1)) - 1
+        return DEFAULT_LAYER_COLORS[idx % len(DEFAULT_LAYER_COLORS)]
+    return DEFAULT_LAYER_COLORS[hash(layer_name) % len(DEFAULT_LAYER_COLORS)]
 
 def smooth_gradients(vals, window=3):
     """Smooth gradient values using a moving average"""
@@ -32,37 +54,50 @@ def load_results(input_folder="."):
     print(f"Loaded {len(df)} results from {csv_path}")
     return df
 
+
+def _extract_layer_number(name: str) -> int:
+    match = re.search(r'layer(\d+)', name)
+    return int(match.group(1)) if match else 0
+
+
+def _get_primary_layers_from_history(history: dict) -> list[str]:
+    gradients = history.get('gradients', {})
+    primary = [
+        name for name in gradients
+        if name != 'epoch' and 'from' not in name
+    ]
+    return sorted(primary, key=_extract_layer_number)
+
+
+def _build_dynamic_pattern_groups(df: pd.DataFrame) -> dict:
+    pattern_groups: dict[str, dict] = {}
+    for col in df.columns:
+        if not col.endswith('_pattern') or col.endswith('_strict_pattern'):
+            continue
+        base = col[:-len('_pattern')]
+        if 'vs' not in base:
+            continue
+        layer_a, layer_b = base.split('vs', 1)
+        related_metrics = [
+            col,
+            f'{base}_strict_pattern',
+            f'{layer_a}_above_{layer_b}',
+            f'{layer_b}_above_{layer_a}',
+            f'switches_{layer_a}_{layer_b}',
+            f'{layer_a}_large_drop',
+            f'{layer_b}_large_drop',
+        ]
+        pattern_groups[col] = {
+            'related_metrics': related_metrics,
+            'title': f'{layer_a.title()} vs {layer_b.title()} Pattern'.replace('Layer', 'Layer ')
+        }
+    return pattern_groups
+
 def create_pattern_specific_plots(df, output_folder=".", title_suffix=""):
     """Create plots for each pattern showing its related metrics"""
-    
-    # Define pattern groups and their related metrics
-    pattern_groups = {
-        'layer1vslayer2_pattern': {
-            'related_metrics': ['layer1vslayer2_pattern', 'layer1vslayer2_strict_pattern', 'layer1_above_layer2', 'layer2_above_layer1', 'switches_12', 'layer1_large_drop', 'layer2_large_drop'],
-            'title': 'Layer 1 vs Layer 2 Pattern'
-        },
-        'layer1vslayer3_pattern': {
-            'related_metrics': ['layer1vslayer3_pattern', 'layer1vslayer3_strict_pattern', 'layer1_above_layer3', 'layer3_above_layer1', 'switches_13', 'layer1_large_drop', 'layer3_large_drop'],
-            'title': 'Layer 1 vs Layer 3 Pattern'
-        },
-        'layer2vslayer3_pattern': {
-            'related_metrics': ['layer2vslayer3_pattern', 'layer2vslayer3_strict_pattern', 'layer2_above_layer3', 'layer3_above_layer2', 'switches_23', 'layer2_large_drop', 'layer3_large_drop'],
-            'title': 'Layer 2 vs Layer 3 Pattern'
-        },
-        'layer2vslayer1_pattern': {
-            'related_metrics': ['layer2vslayer1_pattern', 'layer2vslayer1_strict_pattern', 'layer2_above_layer1', 'layer1_above_layer2', 'switches_12', 'layer2_large_drop', 'layer1_large_drop'],
-            'title': 'Layer 2 vs Layer 1 Pattern'
-        },
-        'layer3vslayer1_pattern': {
-            'related_metrics': ['layer3vslayer1_pattern', 'layer3vslayer1_strict_pattern', 'layer3_above_layer1', 'layer1_above_layer3', 'switches_13', 'layer3_large_drop', 'layer1_large_drop'],
-            'title': 'Layer 3 vs Layer 1 Pattern'
-        },
-        'layer3vslayer2_pattern': {
-            'related_metrics': ['layer3vslayer2_pattern', 'layer3vslayer2_strict_pattern', 'layer3_above_layer2', 'layer2_above_layer3', 'switches_23', 'layer3_large_drop', 'layer2_large_drop'],
-            'title': 'Layer 3 vs Layer 2 Pattern'
-        }
-    }
-    
+
+    pattern_groups = _build_dynamic_pattern_groups(df)
+
     for pattern, info in pattern_groups.items():
         if pattern in df.columns:
             # Check if any runs have this pattern
@@ -134,8 +169,8 @@ def create_comprehensive_metrics_plots(df, output_folder=".", title_suffix=""):
     
     # Select metric columns
     metric_cols = [col for col in df.columns if col not in [
-        'run_name', 'n_epochs', 'batch_size', 'optimizer', 'activation', 
-        'input_size', 'hidden_sizes', 'output_size', 'ln_rate', 'layer_lns',
+        'run_name', 'n_epochs', 'batch_size', 'optimizer', 'activation',
+        'architecture', 'input_size', 'hidden_sizes', 'output_size', 'ln_rate', 'layer_lns',
         'final_test_accuracy', 'final_train_accuracy', 'total_score'
     ]]
     
@@ -146,10 +181,12 @@ def create_comprehensive_metrics_plots(df, output_folder=".", title_suffix=""):
     # Left subplot: Metric frequency bar chart
     # Sort metrics so layer 1 related metrics are at the end
     def sort_metrics(metric_list):
-        """Sort metrics so layer 1 related metrics come last"""
-        layer1_metrics = [m for m in metric_list if 'layer1' in m]
-        other_metrics = [m for m in metric_list if 'layer1' not in m]
-        return other_metrics + layer1_metrics
+        """Sort metrics by the layer numbers they reference, then alphabetically."""
+        def metric_key(name: str):
+            layers = re.findall(r'layer(\d+)', name)
+            layer_nums = tuple(int(num) for num in layers) if layers else (float('inf'),)
+            return (layer_nums, name)
+        return sorted(metric_list, key=metric_key)
     
     sorted_metrics = sort_metrics(metric_cols)
     metric_totals = df[sorted_metrics].sum().sort_values(ascending=False)
@@ -240,7 +277,7 @@ def create_pattern_hyperparameter_heatmaps(df, output_folder=".", title_suffix="
                     sizes = ast.literal_eval(hidden_sizes_str)
                 else:
                     # Fallback: try to extract numbers
-                    sizes = [int(x) for x in re.findall(r'\d+', hidden_sizes_str)[:3]]
+                    sizes = [int(x) for x in re.findall(r'\d+', hidden_sizes_str)]
             except:
                 continue
             
@@ -252,7 +289,8 @@ def create_pattern_hyperparameter_heatmaps(df, output_folder=".", title_suffix="
                 else:
                     # Fallback: try to extract as dict
                     lrs = {}
-                    for layer in ['layer1', 'layer2', 'layer3']:
+                    layer_keys = [f'layer{i+1}' for i in range(len(sizes))]
+                    for layer in layer_keys:
                         match = re.search(rf"'{layer}':\s*([\d.e+-]+)", layer_lns_str)
                         if match:
                             lrs[layer] = float(match.group(1))
@@ -260,8 +298,9 @@ def create_pattern_hyperparameter_heatmaps(df, output_folder=".", title_suffix="
                 continue
             
             # Add entries for each layer (both pattern and no-pattern)
-            for layer_idx, (layer_name, size) in enumerate(zip(['layer1', 'layer2', 'layer3'], sizes), 1):
-                if len(sizes) > layer_idx - 1 and layer_name in lrs:
+            layer_sequence = [f'layer{i+1}' for i in range(len(sizes))]
+            for layer_idx, (layer_name, size) in enumerate(zip(layer_sequence, sizes), 1):
+                if layer_name in lrs:
                     if row[pattern] == 1:
                         cumulative_data_pattern.append({
                             'layer': layer_idx,
@@ -701,32 +740,43 @@ def create_pattern_plots(df, pattern_columns, output_folder=".", input_folder=""
     plt.style.use('default')
     sns.set_palette("husl")
     
-    # 1. Pattern frequency overview
-    pattern_counts = df[pattern_columns].sum().sort_values(ascending=False)
+    def make_frequency_plot(dataframe, suffix):
+        if dataframe.empty:
+            return
+        pattern_counts = dataframe[pattern_columns].sum().sort_values(ascending=False)
+        if pattern_counts.empty:
+            return
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+        pattern_percentages = (pattern_counts / len(dataframe)) * 100
+
+        bars = ax.bar(range(len(pattern_counts)), pattern_percentages)
+        ax.set_xlabel('Patterns')
+        ax.set_ylabel('Percentage of Runs (%)')
+        ax.set_title(f'Pattern Frequency Across All Runs - {suffix}', fontsize=14, fontweight='bold')
+        ax.set_xticks(range(len(pattern_counts)))
+        ax.set_xticklabels(pattern_counts.index, rotation=45, ha='right')
+
+        for i, (bar, count) in enumerate(zip(bars, pattern_counts)):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                    f'{count}/{len(dataframe)}', ha='center', va='bottom', fontsize=10)
+
+        plt.tight_layout()
+        filename = os.path.join(output_folder, f'pattern_frequency_{suffix}.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Pattern frequency plot saved to: {filename}")
+
+    base_suffix = input_folder.replace('outputs/', '').replace('/', '_') if input_folder else "current"
+    make_frequency_plot(df, base_suffix)
+
+    if 'architecture' in df.columns:
+        for arch in sorted(df['architecture'].dropna().unique()):
+            subset = df[df['architecture'] == arch]
+            if subset.empty:
+                continue
+            make_frequency_plot(subset, f'{base_suffix}_{arch}')
     
-    fig, ax = plt.subplots(1, 1, figsize=(12, 6))
-    pattern_percentages = (pattern_counts / len(df)) * 100
-    
-    bars = ax.bar(range(len(pattern_counts)), pattern_percentages)
-    ax.set_xlabel('Patterns')
-    ax.set_ylabel('Percentage of Runs (%)')
-    title_suffix = input_folder.replace('outputs/', '').replace('/', '_') if input_folder else "current"
-    ax.set_title(f'Pattern Frequency Across All Runs - {title_suffix}', fontsize=14, fontweight='bold')
-    ax.set_xticks(range(len(pattern_counts)))
-    ax.set_xticklabels(pattern_counts.index, rotation=45, ha='right')
-    
-    # Add value labels on bars
-    for i, (bar, count) in enumerate(zip(bars, pattern_counts)):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, 
-                f'{count}/{len(df)}', ha='center', va='bottom', fontsize=10)
-    
-    plt.tight_layout()
-    filename = os.path.join(output_folder, f'pattern_frequency_{title_suffix}.png')
-    plt.savefig(filename, dpi=300, bbox_inches='tight')
-    plt.close()
-    print(f"Pattern frequency plot saved to: {filename}")
-    
-    # 2. Create separate plots for each pattern showing gradient examples
     create_pattern_examples(df, pattern_columns, output_folder, input_folder, subfolder)
 
 def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder="", subfolder=""):
@@ -838,17 +888,29 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                         axes[0, i].grid(True, alpha=0.3)
                     
                     # Plot raw and smoothed gradients (middle and bottom rows)
-                    layer_names = ['layer1', 'layer2', 'layer3']
                     gradient_epochs = history['gradients']['epoch']
+                    layer_names = _get_primary_layers_from_history(history)
 
                     # Raw gradients
                     for layer in layer_names:
                         if layer in history['gradients']:
                             series = history['gradients'][layer]
                             if n_examples == 1:
-                                axes[1].plot(gradient_epochs, series, label=layer, linewidth=2)
+                                axes[1].plot(
+                                    gradient_epochs,
+                                    series,
+                                    label=layer,
+                                    linewidth=2,
+                                    color=get_layer_color(layer),
+                                )
                             else:
-                                axes[1, i].plot(gradient_epochs, series, label=layer, linewidth=2)
+                                axes[1, i].plot(
+                                    gradient_epochs,
+                                    series,
+                                    label=layer,
+                                    linewidth=2,
+                                    color=get_layer_color(layer),
+                                )
 
                     # Smoothed gradients
                     for layer in layer_names:
@@ -856,9 +918,21 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                             series = history['gradients'][layer]
                             series_s = smooth_gradients(series, 3)
                             if n_examples == 1:
-                                axes[2].plot(gradient_epochs, series_s, label=layer, linewidth=2)
+                                axes[2].plot(
+                                    gradient_epochs,
+                                    series_s,
+                                    label=layer,
+                                    linewidth=2,
+                                    color=get_layer_color(layer),
+                                )
                             else:
-                                axes[2, i].plot(gradient_epochs, series_s, label=layer, linewidth=2)
+                                axes[2, i].plot(
+                                    gradient_epochs,
+                                    series_s,
+                                    label=layer,
+                                    linewidth=2,
+                                    color=get_layer_color(layer),
+                                )
 
                     if n_examples == 1:
                         axes[1].set_xlabel('Epoch')
@@ -1078,10 +1152,17 @@ def create_no_pattern_examples(df, output_folder=".", input_folder="", subfolder
                 # Gradients plots: raw (middle), smoothed (bottom)
                 if 'gradients' in history and len(history['gradients'].get('epoch', [])) > 0:
                     grad_epochs = history['gradients']['epoch']
+                    layer_names = _get_primary_layers_from_history(history)
                     # Raw
-                    for layer, color in [('layer1', 'b'), ('layer2', 'g'), ('layer3', 'r')]:
+                    for layer in layer_names:
                         if layer in history['gradients']:
-                            axes[1, i].plot(grad_epochs, history['gradients'][layer], label=layer, linewidth=2)
+                            axes[1, i].plot(
+                                grad_epochs,
+                                history['gradients'][layer],
+                                label=layer,
+                                linewidth=2,
+                                color=get_layer_color(layer),
+                            )
                     axes[1, i].set_xlabel('Epoch')
                     axes[1, i].set_ylabel('Gradient Norm')
                     axes[1, i].set_title('Gradients (raw)', fontsize=10)
@@ -1089,10 +1170,16 @@ def create_no_pattern_examples(df, output_folder=".", input_folder="", subfolder
                     axes[1, i].grid(True, alpha=0.3)
 
                     # Smoothed (3-epoch)
-                    for layer, color in [('layer1', 'b'), ('layer2', 'g'), ('layer3', 'r')]:
+                    for layer in layer_names:
                         if layer in history['gradients']:
                             series = history['gradients'][layer]
-                            axes[2, i].plot(grad_epochs, smooth_gradients(series, 3), label=layer, linewidth=2)
+                            axes[2, i].plot(
+                                grad_epochs,
+                                smooth_gradients(series, 3),
+                                label=layer,
+                                linewidth=2,
+                                color=get_layer_color(layer),
+                            )
                     axes[2, i].set_xlabel('Epoch')
                     axes[2, i].set_ylabel('Gradient Norm')
                     axes[2, i].set_title('Gradients (smoothed)', fontsize=10)

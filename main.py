@@ -6,7 +6,7 @@ import sys
 import json
 import shutil
 
-from nets import Net
+from nets import build_model
 from train import train_with_gradient_tracking
 from load_data import load_data
 
@@ -39,6 +39,7 @@ hidden_sizes = cfg['hidden_sizes']
 output_size = cfg['output_size']
 layer_lns = cfg.get('layer_lns')
 activation = cfg['activation']
+architecture = cfg.get('architecture', 'three_layer_skip')
 
 # define output folder: use config filename as folder name
 base_tag = os.path.splitext(os.path.basename(config_path))[0]
@@ -56,8 +57,14 @@ shutil.copy2(config_path, os.path.join(save_dir, 'config.json'))
 # load and define
 print("\nLoading MNIST data...")
 train_loader, test_loader = load_data(batch_size)
-    
-model = Net(input_size, hidden_sizes, output_size, activation=activation)
+
+model = build_model(
+    architecture=architecture,
+    input_size=input_size,
+    hidden_sizes=tuple(hidden_sizes),
+    output_size=output_size,
+    activation=activation,
+)
 
 # train
 print(f"\nTraining model with gradient tracking...")

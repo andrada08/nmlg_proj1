@@ -24,6 +24,7 @@ def extract_hyperparams(config):
         'batch_size': config.get('batch_size', 'N/A'),
         'optimizer': config.get('optimizer', 'N/A'),
         'activation': config.get('activation', 'N/A'),
+        'architecture': config.get('architecture', 'unknown'),
         'input_size': config.get('input_size', 'N/A'),
         'hidden_sizes': str(config.get('hidden_sizes', 'N/A')),
         'output_size': config.get('output_size', 'N/A'),

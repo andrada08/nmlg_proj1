@@ -5,10 +5,18 @@ import glob
 import json
 from concurrent.futures import ProcessPoolExecutor
 import argparse
+from pathlib import Path
 
 def run_single_config(config_path, output_subfolder):
     """Run a single config file and return results"""
     try:
+        base_tag = Path(config_path).stem
+        output_dir = Path('outputs') / output_subfolder / base_tag
+        history_file = output_dir / 'training_history.json'
+        if history_file.exists():
+            print(f"Skipping {config_path} - training_history.json already exists")
+            return {'config': config_path, 'status': 'skipped'}
+
         print(f"Starting {config_path}")
         env = os.environ.copy()
         
@@ -95,10 +103,12 @@ def main():
     
     # Summary
     successful = sum(1 for r in results if r['status'] == 'success')
-    failed = len(results) - successful
+    skipped = sum(1 for r in results if r['status'] == 'skipped')
+    failed = len(results) - successful - skipped
     
     print(f"\nSummary:")
     print(f"  Successful: {successful}")
+    print(f"  Skipped: {skipped}")
     print(f"  Failed: {failed}")
     print(f"  Results saved to: outputs/{args.output_subfolder}/")
     

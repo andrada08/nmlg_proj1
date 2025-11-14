@@ -10,13 +10,18 @@ def train_with_gradient_tracking(model, trainloader, testloader,
     
     model = model.to(device)
     
+    layer_names = model.get_layer_names()
+
     if layer_lns:
-        groups = [
-            {'params': getattr(model, name).parameters(), 'lr': lr}
-            for name, lr in layer_lns.items()
-        ]
+        groups = []
+        for name, lr in layer_lns.items():
+            if not hasattr(model, name):
+                raise AttributeError(
+                    f"Layer '{name}' specified in layer_lns not found in model. "
+                    f"Available layers: {', '.join(layer_names)}"
+                )
+            groups.append({'params': getattr(model, name).parameters(), 'lr': lr})
         # Add remaining layers with default learning rate
-        layer_names = model.get_layer_names()
         for layer_name in layer_names:
             if layer_name not in layer_lns:
                 groups.append({'params': getattr(model, layer_name).parameters(), 'lr': ln_rate})
@@ -32,15 +37,9 @@ def train_with_gradient_tracking(model, trainloader, testloader,
         'test_accuracy': [],
         'gradients': {
             'epoch': [],
-            'layer1': [],
-            'layer2': [],
-            'layer3_from_1': [],
-            'layer3_from_2': [],
-            'layer3': []
+            **{name: [] for name in layer_names}
         }
     }
-
-    layer_names = model.get_layer_names()
 
     for epoch in range(epochs):
         first_batch = True

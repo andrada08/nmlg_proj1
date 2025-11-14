@@ -4,7 +4,7 @@ import sys
 from itertools import product
 
 # Parse command line arguments
-subfolder_name = "sweeps"  # Default subfolder name
+subfolder_name = "three_layer_skip_all_sweeps"  # Default subfolder name
 if '--subfolder' in sys.argv:
     idx = sys.argv.index('--subfolder')
     if idx + 1 < len(sys.argv):
@@ -40,6 +40,7 @@ template = {
     'n_epochs': 20,
     'batch_size': 128,
     'activation': 'relu',
+    'architecture': 'three_layer_skip',
 }
 
 def write_config(name: str, cfg: dict):
@@ -49,9 +50,13 @@ def write_config(name: str, cfg: dict):
     print('Wrote', path)
 
 for (l1, l2, l3), (pattern_name, lr_dict) in product(layer_sizes, lr_patterns.items()):
-    
-    # Create meaningful filename
-    filename = f'sweep_{pattern_name}_l{l1}-{l2}-{l3}_lr{lr_dict["layer1"]:.0e}-{lr_dict["layer2"]:.0e}-{lr_dict["layer3"]:.0e}'
+
+    # Create meaningful filename that encodes architecture
+    filename = (
+        f'sweep_three_layer_skip_{pattern_name}_'
+        f'l{l1}-{l2}-{l3}_'
+        f"lr{lr_dict['layer1']:.0e}-{lr_dict['layer2']:.0e}-{lr_dict['layer3']:.0e}"
+    )
     
     cfg = template | {
         'hidden_sizes': [l1, l2, l3],
@@ -61,4 +66,4 @@ for (l1, l2, l3), (pattern_name, lr_dict) in product(layer_sizes, lr_patterns.it
 
 print(f"\nGenerated {len(layer_sizes) * len(lr_patterns)} config files in: {BASE}")
 print(f"\nTo run these sweeps with the same subfolder:")
-print(f"  python run_sweep.py --output-subfolder {subfolder_name}")
+print(f"  python run_sweep.py --subfolder {subfolder_name} --output-subfolder {subfolder_name}")
