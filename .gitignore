@@ -16,3 +16,5 @@ results/
 .vscode/
 .idea/
 
+# Personal/temporary files
+architecture_diagrams.txt
