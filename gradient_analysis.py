@@ -108,10 +108,11 @@ def compute_gradient_metrics(training_history):
 
     # Temporal order metric: Check if A above B happened before B above A
     def temporal_order(a_list, b_list):
-        """Returns 1 if A was above B (with margin) before B was above A (with margin), else 0"""
+        """Returns (1, epoch) if A was above B (with margin) before B was above A (with margin), else (0, None).
+        epoch is the epoch where B first becomes above A (the switch point)."""
         n = min(len(a_list), len(b_list))
         if n == 0:
-            return 0
+            return (0, None)
 
         first_a_above_b = None
         first_b_above_a = None
@@ -127,13 +128,79 @@ def compute_gradient_metrics(training_history):
 
         # Pattern requires A above B happened before B above A
         if first_a_above_b is not None and first_b_above_a is not None:
-            return 1 if first_a_above_b < first_b_above_a else 0
-        return 0
+            if first_a_above_b < first_b_above_a:
+                return (1, first_b_above_a)  # Return the epoch where B becomes above A
+            else:
+                return (0, None)
+        return (0, None)
+
+    # Function to find the largest single-epoch jump in accuracy throughout training
+    def check_accuracy_boost(pattern_epoch, test_accuracy_list, boost_threshold=0.5):
+        """
+        Find the largest single-epoch jump in accuracy throughout the entire training.
+        This is independent of the pattern detection epoch.
+        
+        Args:
+            pattern_epoch: Epoch where pattern was detected (0-indexed) - kept for compatibility but not used
+            test_accuracy_list: List of test accuracies per epoch
+            boost_threshold: Minimum accuracy increase (in percentage points) to count as boost
+            
+        Returns:
+            (boost_detected, boost_magnitude, boost_epoch)
+            - boost_detected: 1 if boost detected, 0 otherwise
+            - boost_magnitude: Largest single-epoch jump found (percentage points)
+            - boost_epoch: Epoch where the jump occurs (the epoch AFTER the jump, 0-indexed)
+        """
+        if not test_accuracy_list or len(test_accuracy_list) < 2:
+            return (0, 0.0, None)
+        
+        # Find the largest single-epoch jump throughout training
+        max_jump = 0.0
+        max_jump_epoch = None
+        
+        for i in range(1, len(test_accuracy_list)):
+            jump = test_accuracy_list[i] - test_accuracy_list[i-1]
+            if jump > max_jump:
+                max_jump = jump
+                max_jump_epoch = i  # Epoch where the jump occurred (after the increase)
+        
+        # Check if jump exceeds threshold
+        boost_detected = 1 if max_jump >= boost_threshold else 0
+        
+        return (boost_detected, max_jump, max_jump_epoch)
+    
+    def compute_boost_pattern_alignment(pattern_epoch, boost_epoch, alignment_window=3):
+        """
+        Compute alignment metrics between pattern detection epoch and accuracy boost epoch.
+        
+        Args:
+            pattern_epoch: Epoch where pattern was detected (0-indexed), or None/-1 if no pattern
+            boost_epoch: Epoch where accuracy boost occurred (0-indexed), or None/-1 if no boost
+            alignment_window: Number of epochs on either side to consider "aligned" (default ±3)
+            
+        Returns:
+            (epoch_diff, abs_epoch_diff, aligned)
+            - epoch_diff: boost_epoch - pattern_epoch (signed, negative means boost before pattern)
+            - abs_epoch_diff: Absolute difference
+            - aligned: 1 if within ±alignment_window epochs, 0 otherwise
+        """
+        if pattern_epoch is None or pattern_epoch == -1 or boost_epoch is None or boost_epoch == -1:
+            return (-999, -999, 0)  # Use -999 as sentinel for missing data
+        
+        epoch_diff = boost_epoch - pattern_epoch
+        abs_epoch_diff = abs(epoch_diff)
+        aligned = 1 if abs_epoch_diff <= alignment_window else 0
+        
+        return (epoch_diff, abs_epoch_diff, aligned)
 
     # Combined patterns for all layer pairs: composite of component metrics (unchanged except margin-aware upstream)
-    def check_pattern_composite(layerA_above_B, layerB_above_A, switches_AB, layerA_large_drop, temporal_order_AB):
-        """Pattern occurs if all component metrics are present AND the temporal order is correct (A above B happened before B above A)"""
-        return 1 if (layerA_above_B and layerB_above_A and switches_AB and layerA_large_drop and temporal_order_AB) else 0
+    def check_pattern_composite(layerA_above_B, layerB_above_A, switches_AB, layerA_large_drop, temporal_order_result):
+        """Pattern occurs if all component metrics are present AND the temporal order is correct (A above B happened before B above A).
+        Returns (1, epoch) if pattern detected, else (0, None). epoch is where the pattern switch occurs."""
+        temporal_order_AB, pattern_epoch = temporal_order_result
+        if (layerA_above_B and layerB_above_A and switches_AB and layerA_large_drop and temporal_order_AB):
+            return (1, pattern_epoch)
+        return (0, None)
 
     # Strict temporal pattern: checks specific epoch-1, epoch, epoch+1 sequence
     # Uses smoothed gradients and margin-aware comparisons
@@ -141,11 +208,11 @@ def compute_gradient_metrics(training_history):
         """
         Strict pattern: A above B at epoch-1, B above A at epoch, AND A has large drop at epoch-1.
         This is a very specific temporal sequence that must occur consecutively.
+        Returns (1, epoch) if pattern detected at epoch i, else (0, None).
         """
-        pattern = 0
         # Need at least 2 epochs to check epoch-1 and epoch
         if len(layerA_smoothed) < 2 or len(layerA_drops) < 1:
-            return 0
+            return (0, None)
         
         # Check for the specific sequence: epoch-1 (A > B), epoch (B > A), and large drop at epoch-1
         for i in range(1, len(layerA_smoothed)):
@@ -155,10 +222,11 @@ def compute_gradient_metrics(training_history):
             if (gt_margin(layerA_smoothed[i-1], layerB_smoothed[i-1], epsilon_rel) and
                 gt_margin(layerB_smoothed[i], layerA_smoothed[i], epsilon_rel) and
                 i-1 < len(layerA_drops) and layerA_drops[i-1] > drop_threshold):
-                pattern = 1
-                break
-        return pattern
+                return (1, i)  # Pattern detected at epoch i
+        return (0, None)
     
+    # Get test accuracy list for accuracy boost analysis
+    test_accuracy_list = training_history.get('test_accuracy', [])
 
     # Pairwise metrics for all unordered layer pairs
     for layer_a, layer_b in combinations(main_layers, 2):
@@ -176,36 +244,141 @@ def compute_gradient_metrics(training_history):
         switches_ab = switches(sm_a, sm_b)
         metrics[f'switches_{layer_a}_{layer_b}'] = 1 if switches_ab > 0 else 0
 
-        # Temporal order (both directions)
-        metrics[f'{layer_a}vs{layer_b}_temporal_order'] = temporal_order(sm_a, sm_b)
-        metrics[f'{layer_b}vs{layer_a}_temporal_order'] = temporal_order(sm_b, sm_a)
+        # Temporal order (both directions) - now returns (value, epoch)
+        temporal_order_ab_result = temporal_order(sm_a, sm_b)
+        temporal_order_ba_result = temporal_order(sm_b, sm_a)
+        metrics[f'{layer_a}vs{layer_b}_temporal_order'] = temporal_order_ab_result[0]
+        metrics[f'{layer_b}vs{layer_a}_temporal_order'] = temporal_order_ba_result[0]
 
-        # Composite patterns for both directions
-        metrics[f'{layer_a}vs{layer_b}_pattern'] = check_pattern_composite(
+        # Composite patterns for both directions - now returns (value, epoch)
+        pattern_ab_result = check_pattern_composite(
             metrics[f'{layer_a}_above_{layer_b}'],
             metrics[f'{layer_b}_above_{layer_a}'],
             metrics[f'switches_{layer_a}_{layer_b}'],
             metrics[f'{layer_a}_large_drop'],
-            metrics[f'{layer_a}vs{layer_b}_temporal_order'],
+            temporal_order_ab_result,
         )
-        metrics[f'{layer_b}vs{layer_a}_pattern'] = check_pattern_composite(
+        pattern_ba_result = check_pattern_composite(
             metrics[f'{layer_b}_above_{layer_a}'],
             metrics[f'{layer_a}_above_{layer_b}'],
             metrics[f'switches_{layer_a}_{layer_b}'],
             metrics[f'{layer_b}_large_drop'],
-            metrics[f'{layer_b}vs{layer_a}_temporal_order'],
+            temporal_order_ba_result,
         )
+        metrics[f'{layer_a}vs{layer_b}_pattern'] = pattern_ab_result[0]
+        metrics[f'{layer_b}vs{layer_a}_pattern'] = pattern_ba_result[0]
+        # Store pattern detection epochs
+        metrics[f'{layer_a}vs{layer_b}_pattern_epoch'] = pattern_ab_result[1] if pattern_ab_result[1] is not None else -1
+        metrics[f'{layer_b}vs{layer_a}_pattern_epoch'] = pattern_ba_result[1] if pattern_ba_result[1] is not None else -1
 
-        # Strict patterns
-        metrics[f'{layer_a}vs{layer_b}_strict_pattern'] = check_pattern_strict(sm_a, sm_b, drops[layer_a])
-        metrics[f'{layer_b}vs{layer_a}_strict_pattern'] = check_pattern_strict(sm_b, sm_a, drops[layer_b])
+        # Strict patterns - now returns (value, epoch)
+        strict_ab_result = check_pattern_strict(sm_a, sm_b, drops[layer_a])
+        strict_ba_result = check_pattern_strict(sm_b, sm_a, drops[layer_b])
+        metrics[f'{layer_a}vs{layer_b}_strict_pattern'] = strict_ab_result[0]
+        metrics[f'{layer_b}vs{layer_a}_strict_pattern'] = strict_ba_result[0]
+        # Store strict pattern detection epochs
+        metrics[f'{layer_a}vs{layer_b}_strict_pattern_epoch'] = strict_ab_result[1] if strict_ab_result[1] is not None else -1
+        metrics[f'{layer_b}vs{layer_a}_strict_pattern_epoch'] = strict_ba_result[1] if strict_ba_result[1] is not None else -1
 
         # Strict patterns must be subset of composite patterns
         if metrics[f'{layer_a}vs{layer_b}_pattern'] == 0:
             metrics[f'{layer_a}vs{layer_b}_strict_pattern'] = 0
+            strict_ab_result = (0, None)
         if metrics[f'{layer_b}vs{layer_a}_pattern'] == 0:
             metrics[f'{layer_b}vs{layer_a}_strict_pattern'] = 0
-
+            strict_ba_result = (0, None)
+        
+        # Check for accuracy boost around pattern detection epochs
+        # For composite patterns, use the pattern epoch
+        if pattern_ab_result[0] == 1 and pattern_ab_result[1] is not None:
+            boost_result = check_accuracy_boost(pattern_ab_result[1], test_accuracy_list)
+            metrics[f'{layer_a}vs{layer_b}_pattern_accuracy_boost'] = boost_result[0]
+            metrics[f'{layer_a}vs{layer_b}_pattern_accuracy_boost_magnitude'] = boost_result[1]
+            metrics[f'{layer_a}vs{layer_b}_pattern_accuracy_boost_epoch'] = boost_result[2] if boost_result[2] is not None else -1
+            
+            # Compute alignment metrics
+            alignment_result = compute_boost_pattern_alignment(
+                pattern_ab_result[1], 
+                boost_result[2] if boost_result[2] is not None else -1
+            )
+            metrics[f'{layer_a}vs{layer_b}_pattern_boost_pattern_epoch_diff'] = alignment_result[0]
+            metrics[f'{layer_a}vs{layer_b}_pattern_boost_pattern_epoch_abs_diff'] = alignment_result[1]
+            metrics[f'{layer_a}vs{layer_b}_pattern_boost_pattern_aligned'] = alignment_result[2]
+        else:
+            metrics[f'{layer_a}vs{layer_b}_pattern_accuracy_boost'] = 0
+            metrics[f'{layer_a}vs{layer_b}_pattern_accuracy_boost_magnitude'] = 0.0
+            metrics[f'{layer_a}vs{layer_b}_pattern_accuracy_boost_epoch'] = -1
+            metrics[f'{layer_a}vs{layer_b}_pattern_boost_pattern_epoch_diff'] = -999
+            metrics[f'{layer_a}vs{layer_b}_pattern_boost_pattern_epoch_abs_diff'] = -999
+            metrics[f'{layer_a}vs{layer_b}_pattern_boost_pattern_aligned'] = 0
+        
+        if pattern_ba_result[0] == 1 and pattern_ba_result[1] is not None:
+            boost_result = check_accuracy_boost(pattern_ba_result[1], test_accuracy_list)
+            metrics[f'{layer_b}vs{layer_a}_pattern_accuracy_boost'] = boost_result[0]
+            metrics[f'{layer_b}vs{layer_a}_pattern_accuracy_boost_magnitude'] = boost_result[1]
+            metrics[f'{layer_b}vs{layer_a}_pattern_accuracy_boost_epoch'] = boost_result[2] if boost_result[2] is not None else -1
+            
+            # Compute alignment metrics
+            alignment_result = compute_boost_pattern_alignment(
+                pattern_ba_result[1], 
+                boost_result[2] if boost_result[2] is not None else -1
+            )
+            metrics[f'{layer_b}vs{layer_a}_pattern_boost_pattern_epoch_diff'] = alignment_result[0]
+            metrics[f'{layer_b}vs{layer_a}_pattern_boost_pattern_epoch_abs_diff'] = alignment_result[1]
+            metrics[f'{layer_b}vs{layer_a}_pattern_boost_pattern_aligned'] = alignment_result[2]
+        else:
+            metrics[f'{layer_b}vs{layer_a}_pattern_accuracy_boost'] = 0
+            metrics[f'{layer_b}vs{layer_a}_pattern_accuracy_boost_magnitude'] = 0.0
+            metrics[f'{layer_b}vs{layer_a}_pattern_accuracy_boost_epoch'] = -1
+            metrics[f'{layer_b}vs{layer_a}_pattern_boost_pattern_epoch_diff'] = -999
+            metrics[f'{layer_b}vs{layer_a}_pattern_boost_pattern_epoch_abs_diff'] = -999
+            metrics[f'{layer_b}vs{layer_a}_pattern_boost_pattern_aligned'] = 0
+        
+        # For strict patterns
+        if strict_ab_result[0] == 1 and strict_ab_result[1] is not None:
+            boost_result = check_accuracy_boost(strict_ab_result[1], test_accuracy_list)
+            metrics[f'{layer_a}vs{layer_b}_strict_pattern_accuracy_boost'] = boost_result[0]
+            metrics[f'{layer_a}vs{layer_b}_strict_pattern_accuracy_boost_magnitude'] = boost_result[1]
+            metrics[f'{layer_a}vs{layer_b}_strict_pattern_accuracy_boost_epoch'] = boost_result[2] if boost_result[2] is not None else -1
+            
+            # Compute alignment metrics
+            alignment_result = compute_boost_pattern_alignment(
+                strict_ab_result[1], 
+                boost_result[2] if boost_result[2] is not None else -1
+            )
+            metrics[f'{layer_a}vs{layer_b}_strict_pattern_boost_pattern_epoch_diff'] = alignment_result[0]
+            metrics[f'{layer_a}vs{layer_b}_strict_pattern_boost_pattern_epoch_abs_diff'] = alignment_result[1]
+            metrics[f'{layer_a}vs{layer_b}_strict_pattern_boost_pattern_aligned'] = alignment_result[2]
+        else:
+            metrics[f'{layer_a}vs{layer_b}_strict_pattern_accuracy_boost'] = 0
+            metrics[f'{layer_a}vs{layer_b}_strict_pattern_accuracy_boost_magnitude'] = 0.0
+            metrics[f'{layer_a}vs{layer_b}_strict_pattern_accuracy_boost_epoch'] = -1
+            metrics[f'{layer_a}vs{layer_b}_strict_pattern_boost_pattern_epoch_diff'] = -999
+            metrics[f'{layer_a}vs{layer_b}_strict_pattern_boost_pattern_epoch_abs_diff'] = -999
+            metrics[f'{layer_a}vs{layer_b}_strict_pattern_boost_pattern_aligned'] = 0
+        
+        if strict_ba_result[0] == 1 and strict_ba_result[1] is not None:
+            boost_result = check_accuracy_boost(strict_ba_result[1], test_accuracy_list)
+            metrics[f'{layer_b}vs{layer_a}_strict_pattern_accuracy_boost'] = boost_result[0]
+            metrics[f'{layer_b}vs{layer_a}_strict_pattern_accuracy_boost_magnitude'] = boost_result[1]
+            metrics[f'{layer_b}vs{layer_a}_strict_pattern_accuracy_boost_epoch'] = boost_result[2] if boost_result[2] is not None else -1
+            
+            # Compute alignment metrics
+            alignment_result = compute_boost_pattern_alignment(
+                strict_ba_result[1], 
+                boost_result[2] if boost_result[2] is not None else -1
+            )
+            metrics[f'{layer_b}vs{layer_a}_strict_pattern_boost_pattern_epoch_diff'] = alignment_result[0]
+            metrics[f'{layer_b}vs{layer_a}_strict_pattern_boost_pattern_epoch_abs_diff'] = alignment_result[1]
+            metrics[f'{layer_b}vs{layer_a}_strict_pattern_boost_pattern_aligned'] = alignment_result[2]
+        else:
+            metrics[f'{layer_b}vs{layer_a}_strict_pattern_accuracy_boost'] = 0
+            metrics[f'{layer_b}vs{layer_a}_strict_pattern_accuracy_boost_magnitude'] = 0.0
+            metrics[f'{layer_b}vs{layer_a}_strict_pattern_accuracy_boost_epoch'] = -1
+            metrics[f'{layer_b}vs{layer_a}_strict_pattern_boost_pattern_epoch_diff'] = -999
+            metrics[f'{layer_b}vs{layer_a}_strict_pattern_boost_pattern_epoch_abs_diff'] = -999
+            metrics[f'{layer_b}vs{layer_a}_strict_pattern_boost_pattern_aligned'] = 0
+    
     # Extract final accuracies
     if 'accuracy' in training_history and training_history['accuracy']:
         metrics['final_train_accuracy'] = training_history['accuracy'][-1]
