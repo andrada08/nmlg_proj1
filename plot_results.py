@@ -109,8 +109,15 @@ def create_pattern_specific_plots(df, output_folder=".", title_suffix=""):
                 available_metrics = [m for m in info['related_metrics'] if m in df.columns]
                 
                 if len(available_metrics) > 0:
-                    # Create figure with two subplots
-                    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+                    # Check if alignment metric exists for this pattern
+                    alignment_diff_col = f'{pattern.replace("_pattern", "")}_pattern_boost_pattern_epoch_diff'
+                    has_alignment = alignment_diff_col in df.columns
+                    
+                    # Create figure with three subplots if alignment data exists, otherwise two
+                    if has_alignment:
+                        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(24, 6))
+                    else:
+                        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
                     fig.suptitle(f'{info["title"]} Analysis - {title_suffix}', fontsize=14, fontweight='bold')
                     
                     # Left subplot: Metric frequency for this pattern
@@ -129,7 +136,7 @@ def create_pattern_specific_plots(df, output_folder=".", title_suffix=""):
                         ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, 
                                  f'{count}', ha='center', va='bottom', fontsize=9)
                     
-                    # Right subplot: Correlation matrix for related metrics
+                    # Middle subplot: Correlation matrix for related metrics
                     if len(available_metrics) > 1:
                         pattern_data = df[available_metrics]
                         correlation_matrix = pattern_data.corr()
@@ -154,6 +161,42 @@ def create_pattern_specific_plots(df, output_folder=".", title_suffix=""):
                         ax2.text(0.5, 0.5, 'Need at least 2 metrics\nfor correlation matrix', 
                                 ha='center', va='center', transform=ax2.transAxes, fontsize=12)
                         ax2.set_title('Related Metrics Correlation')
+                    
+                    # Right subplot: Histogram of epoch differences (boost - pattern)
+                    if has_alignment:
+                        # Get valid alignment data (exclude -999 sentinel values)
+                        alignment_data = pattern_runs[alignment_diff_col]
+                        valid_alignment = alignment_data[alignment_data != -999]
+                        
+                        if len(valid_alignment) > 0:
+                            # Create histogram
+                            n, bins, patches = ax3.hist(valid_alignment, bins=min(20, len(valid_alignment.unique())), 
+                                                       edgecolor='black', alpha=0.7, color='steelblue')
+                            
+                            # Add vertical line at 0
+                            ax3.axvline(x=0, color='red', linestyle='--', linewidth=2, label='Same Epoch')
+                            
+                            # Calculate statistics
+                            mean_diff = valid_alignment.mean()
+                            std_diff = valid_alignment.std()
+                            aligned_count = (valid_alignment.abs() <= 3).sum()
+                            aligned_pct = 100 * aligned_count / len(valid_alignment)
+                            
+                            ax3.set_xlabel('Epoch Difference (Boost - Pattern)')
+                            ax3.set_ylabel('Number of Runs')
+                            ax3.set_title(f'Boost-Pattern Alignment\n(n={len(valid_alignment)}, {aligned_pct:.1f}% within ±3 epochs)')
+                            ax3.grid(True, alpha=0.3)
+                            ax3.legend()
+                            
+                            # Add text box with statistics
+                            stats_text = f'Mean: {mean_diff:.2f}\nStd: {std_diff:.2f}\nAligned (±3): {aligned_count}/{len(valid_alignment)}'
+                            ax3.text(0.02, 0.98, stats_text, transform=ax3.transAxes, 
+                                    fontsize=9, verticalalignment='top',
+                                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+                        else:
+                            ax3.text(0.5, 0.5, 'No valid alignment data\nfor this pattern', 
+                                    ha='center', va='center', transform=ax3.transAxes, fontsize=12)
+                            ax3.set_title('Boost-Pattern Alignment')
                     
                     plt.tight_layout()
                     
@@ -319,8 +362,8 @@ def create_pattern_hyperparameter_heatmaps(df, output_folder=".", title_suffix="
         if not cumulative_data_pattern and not cumulative_data_no_pattern:
             print(f"  Warning: Could not parse hyperparameters for cumulative view. Skipping additional panels.")
             # Create single panel figure
-            fig, ax = plt.subplots(1, 1, figsize=(max(8, len(pivot_table.columns) * 0.8), 
-                                                  max(6, len(pivot_table.index) * 0.6)))
+            fig, ax = plt.subplots(1, 1, figsize=(max(12, len(pivot_table.columns) * 1.2), 
+                                                  max(8, len(pivot_table.index) * 0.8)))
             axes = [ax]
             has_cumulative = False
         else:
@@ -419,7 +462,7 @@ def create_pattern_hyperparameter_heatmaps(df, output_folder=".", title_suffix="
             cum_pivot_table_no_pattern.columns = col_labels
             
             # Create three-panel figure
-            fig = plt.figure(figsize=(24, max(8, len(row_labels) * 0.3)))
+            fig = plt.figure(figsize=(36, max(8, len(row_labels) * 0.3)))
             gs = fig.add_gridspec(1, 3, width_ratios=[1, 1, 1], hspace=0.3, wspace=0.3)
             ax1 = fig.add_subplot(gs[0, 0])
             ax2 = fig.add_subplot(gs[0, 1])
@@ -453,7 +496,12 @@ def create_pattern_hyperparameter_heatmaps(df, output_folder=".", title_suffix="
         # ===== MIDDLE PANEL: Cumulative by individual components (WITH PATTERN) =====
         if has_cumulative:
             ax2 = axes[1]
-            im2 = ax2.imshow(cum_pivot_table_pattern.values, cmap='YlOrRd', aspect='auto', vmin=0)
+            # Calculate ratio table for coloring (pattern_count / total)
+            ratio_table_pattern = cum_pivot_table_pattern.values.copy().astype(float)
+            total_table = cum_pivot_table_pattern.values + cum_pivot_table_no_pattern.values
+            ratio_table_pattern[total_table > 0] = cum_pivot_table_pattern.values[total_table > 0] / total_table[total_table > 0]
+            ratio_table_pattern[total_table == 0] = 0.0
+            im2 = ax2.imshow(ratio_table_pattern, cmap='YlOrRd', aspect='auto', vmin=0, vmax=1)
             
             # Create grouped tick labels with separators
             def create_grouped_labels(labels, label_type='size'):
@@ -523,21 +571,30 @@ def create_pattern_hyperparameter_heatmaps(df, output_folder=".", title_suffix="
             ax2.set_ylabel('Layer Size', fontsize=11, fontweight='bold', labelpad=25)
             ax2.set_title(f'With Pattern\n(Sum across all layers)', fontsize=12, fontweight='bold')
             
-            max_count2 = cum_pivot_table_pattern.values.max()
+            # Calculate ratios for text color determination
             for i in range(len(cum_pivot_table_pattern.index)):
                 for j in range(len(cum_pivot_table_pattern.columns)):
-                    count = int(cum_pivot_table_pattern.iloc[i, j])
-                    if count > 0:
-                        text_color = 'white' if max_count2 > 0 and count > max_count2 * 0.6 else 'black'
-                        ax2.text(j, i, str(count), ha='center', va='center', 
+                    pattern_count = int(cum_pivot_table_pattern.iloc[i, j])
+                    no_pattern_count = int(cum_pivot_table_no_pattern.iloc[i, j])
+                    total = pattern_count + no_pattern_count
+                    if total > 0:
+                        ratio = pattern_count / total
+                        text_color = 'white' if ratio > 0.5 else 'black'
+                        label = f'{pattern_count}/{total}' if total > 0 else ''
+                        ax2.text(j, i, label, ha='center', va='center', 
                                 color=text_color, fontsize=8, fontweight='bold')
             
             cbar2 = plt.colorbar(im2, ax=ax2)
-            cbar2.set_label('Number of Runs', rotation=270, labelpad=15, fontsize=9)
+            cbar2.set_label('Ratio (Pattern/Total)', rotation=270, labelpad=15, fontsize=9)
             
             # ===== RIGHT PANEL: Cumulative by individual components (NO PATTERN) =====
             ax3 = axes[2]
-            im3 = ax3.imshow(cum_pivot_table_no_pattern.values, cmap='YlOrRd', aspect='auto', vmin=0)
+            # Calculate ratio table for coloring (no_pattern_count / total)
+            ratio_table_no_pattern = cum_pivot_table_no_pattern.values.copy().astype(float)
+            total_table = cum_pivot_table_pattern.values + cum_pivot_table_no_pattern.values
+            ratio_table_no_pattern[total_table > 0] = cum_pivot_table_no_pattern.values[total_table > 0] / total_table[total_table > 0]
+            ratio_table_no_pattern[total_table == 0] = 0.0
+            im3 = ax3.imshow(ratio_table_no_pattern, cmap='YlOrRd', aspect='auto', vmin=0, vmax=1)
             
             ax3.set_xticks(col_tick_pos)
             ax3.set_yticks(row_tick_pos)
@@ -573,17 +630,21 @@ def create_pattern_hyperparameter_heatmaps(df, output_folder=".", title_suffix="
             ax3.set_ylabel('Layer Size', fontsize=11, fontweight='bold', labelpad=25)
             ax3.set_title(f'Without Pattern\n(Sum across all layers)', fontsize=12, fontweight='bold')
             
-            max_count3 = cum_pivot_table_no_pattern.values.max()
+            # Calculate ratios for text color determination
             for i in range(len(cum_pivot_table_no_pattern.index)):
                 for j in range(len(cum_pivot_table_no_pattern.columns)):
-                    count = int(cum_pivot_table_no_pattern.iloc[i, j])
-                    if count > 0:
-                        text_color = 'white' if max_count3 > 0 and count > max_count3 * 0.6 else 'black'
-                        ax3.text(j, i, str(count), ha='center', va='center', 
+                    pattern_count = int(cum_pivot_table_pattern.iloc[i, j])
+                    no_pattern_count = int(cum_pivot_table_no_pattern.iloc[i, j])
+                    total = pattern_count + no_pattern_count
+                    if total > 0:
+                        ratio = no_pattern_count / total
+                        text_color = 'white' if ratio > 0.5 else 'black'
+                        label = f'{no_pattern_count}/{total}' if total > 0 else ''
+                        ax3.text(j, i, label, ha='center', va='center', 
                                 color=text_color, fontsize=8, fontweight='bold')
             
             cbar3 = plt.colorbar(im3, ax=ax3)
-            cbar3.set_label('Number of Runs', rotation=270, labelpad=15, fontsize=9)
+            cbar3.set_label('Ratio (No Pattern/Total)', rotation=270, labelpad=15, fontsize=9)
         
         # Overall title
         pattern_name = pattern.replace('_pattern', '').replace('_', ' ')
@@ -747,19 +808,245 @@ def create_pattern_plots(df, pattern_columns, output_folder=".", input_folder=""
         if pattern_counts.empty:
             return
 
-        fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+        # Create figure with two subplots: frequency bar chart and overlap bar chart
+        # Calculate height based on number of categories
+        n_categories = len(pattern_columns) + 10  # Estimate, will be adjusted
+        fig_height = max(8, min(16, n_categories * 0.4))
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(24, fig_height))
+        
+        # Create consistent color mapping for patterns
+        # Use explicit mapping for common patterns, fallback for others
+        pattern_color_map = {}
+        
+        # Explicit color mapping for specific patterns (using muted, softer colors)
+        explicit_pattern_colors = {
+            'layer4vslayer3': '#E24A4A',  # Soft Red
+            'layer4vslayer2': '#4A90E2',  # Soft Blue
+            'layer4vslayer1': '#4AE24A',  # Soft Green
+            'layer3vslayer4': '#E24AE2',  # Soft Magenta
+            'layer3vslayer2': '#E2E24A',  # Soft Yellow
+            'layer3vslayer1': '#4AE2E2',  # Soft Cyan
+            'layer2vslayer4': '#E2A04A',  # Soft Orange
+            'layer2vslayer3': '#A04AE2',  # Soft Purple
+            'layer2vslayer1': '#E24AA0',  # Soft Pink
+            'layer1vslayer4': '#4AA0E2',  # Soft Light Blue
+            'layer1vslayer3': '#A0E24A',  # Soft Lime
+            'layer1vslayer2': '#4AA04A',  # Soft Dark Green
+        }
+        
+        # Fallback colors for patterns not in explicit mapping (muted tones)
+        fallback_colors = [
+            '#8B6FA0',  # Muted Purple
+            '#A06F6F',  # Muted Red
+            '#6F6FA0',  # Muted Blue
+            '#8B8B6F',  # Muted Olive
+            '#6F8B8B',  # Muted Teal
+            '#7A6FA0',  # Muted Indigo
+            '#8B7A6F',  # Muted Brown
+            '#7A8B6F',  # Muted Green
+            '#9A9A9A',  # Muted Gray
+            '#D4A5A5',  # Muted Pink
+        ]
+        
+        # Assign colors to patterns
+        fallback_idx = 0
+        for pattern in pattern_counts.index:
+            base = pattern.replace('_pattern', '').replace('_strict_pattern', '')
+            if base in explicit_pattern_colors:
+                pattern_color_map[pattern] = explicit_pattern_colors[base]
+            else:
+                # Use fallback color
+                pattern_color_map[pattern] = fallback_colors[fallback_idx % len(fallback_colors)]
+                fallback_idx += 1
+        
+        # Left subplot: Pattern frequency horizontal bar chart
         pattern_percentages = (pattern_counts / len(dataframe)) * 100
-
-        bars = ax.bar(range(len(pattern_counts)), pattern_percentages)
-        ax.set_xlabel('Patterns')
-        ax.set_ylabel('Percentage of Runs (%)')
-        ax.set_title(f'Pattern Frequency Across All Runs - {suffix}', fontsize=14, fontweight='bold')
-        ax.set_xticks(range(len(pattern_counts)))
-        ax.set_xticklabels(pattern_counts.index, rotation=45, ha='right')
-
-        for i, (bar, count) in enumerate(zip(bars, pattern_counts)):
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
-                    f'{count}/{len(dataframe)}', ha='center', va='bottom', fontsize=10)
+        y_pos = range(len(pattern_counts))
+        # Assign colors based on pattern
+        freq_colors = [pattern_color_map[p] for p in pattern_counts.index]
+        bars = ax1.barh(y_pos, pattern_percentages, color=freq_colors, edgecolor='black', linewidth=0.5)
+        ax1.set_xlabel('Percentage of Runs (%)', fontsize=11)
+        ax1.set_ylabel('Patterns')
+        ax1.set_title(f'Pattern Frequency Across All Runs - {suffix}', fontsize=14, fontweight='bold')
+        ax1.set_yticks(y_pos)
+        ax1.set_yticklabels(pattern_counts.index, fontsize=9)
+        ax1.invert_yaxis()  # Highest values at top
+        
+        # Add percentage and count labels on bars
+        for i, (bar, pct, count) in enumerate(zip(bars, pattern_percentages, pattern_counts)):
+            ax1.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height()/2,
+                    f'{pct:.1f}% ({count})', 
+                    ha='left', va='center', fontsize=9, fontweight='bold')
+        
+        # Set x-axis limit to accommodate labels
+        max_pct = max(pattern_percentages)
+        ax1.set_xlim(0, max_pct * 1.15)
+        ax1.grid(True, axis='x', alpha=0.3, linestyle='--')
+        
+        # Right subplot: Pattern overlap pie chart
+        # Analyze pattern overlaps (exclude strict patterns)
+        # Filter out strict patterns for overlap analysis
+        non_strict_pattern_columns = [p for p in pattern_columns if 'strict' not in p.lower()]
+        pattern_mask = dataframe[non_strict_pattern_columns].sum(axis=1)  # Number of patterns per run
+        
+        # Categorize runs
+        no_pattern = (pattern_mask == 0).sum()
+        single_pattern = (pattern_mask == 1).sum()
+        overlap = (pattern_mask >= 2).sum()
+        
+        # For single pattern runs, count which patterns appear alone
+        single_pattern_counts = {}
+        for pattern in non_strict_pattern_columns:
+            # Runs with only this pattern (no other patterns)
+            only_this_pattern = ((dataframe[pattern] == 1) & (pattern_mask == 1)).sum()
+            if only_this_pattern > 0:
+                single_pattern_counts[pattern] = only_this_pattern
+        
+        # Helper function to blend colors by averaging RGB values
+        def blend_colors(color_list):
+            """Blend multiple colors by averaging their RGB values directly"""
+            if not color_list:
+                return '#808080'  # Gray default
+            
+            # Convert all colors to RGB
+            rgb_list = []
+            for color in color_list:
+                if isinstance(color, str):
+                    # Convert hex to RGB
+                    color = color.lstrip('#')
+                    rgb = np.array([int(color[i:i+2], 16) for i in (0, 2, 4)])
+                else:
+                    # matplotlib color tuple (RGBA), take first 3
+                    rgb = np.array([int(c * 255) for c in color[:3]])
+                rgb_list.append(rgb)
+            
+            # Average RGB values directly
+            # This gives intuitive results: red + blue = purple, red + yellow = orange, etc.
+            avg_rgb = np.mean(rgb_list, axis=0).astype(int)
+            
+            # Convert back to hex
+            hex_color = '#{:02x}{:02x}{:02x}'.format(
+                min(255, max(0, avg_rgb[0])),
+                min(255, max(0, avg_rgb[1])),
+                min(255, max(0, avg_rgb[2]))
+            )
+            return hex_color
+        
+        # Build bar chart data for pattern overlap
+        bar_labels = []
+        bar_sizes = []
+        bar_colors = []
+        
+        # No pattern
+        if no_pattern > 0:
+            bar_labels.append('No Pattern')
+            bar_sizes.append(no_pattern)
+            bar_colors.append('#cccccc')
+        
+        # Single patterns - show all (or top N if too many)
+        sorted_single = sorted(single_pattern_counts.items(), key=lambda x: x[1], reverse=True)
+        max_single_to_show = min(15, len(sorted_single))  # Show top 15 single patterns
+        
+        for pattern, count in sorted_single[:max_single_to_show]:
+            # Shorten pattern name for display
+            pattern_short = pattern.replace('_pattern', '').replace('layer', 'L')
+            bar_labels.append(f'Only {pattern_short}')
+            bar_sizes.append(count)
+            # Use the same color as in frequency plot
+            if pattern in pattern_color_map:
+                bar_colors.append(pattern_color_map[pattern])
+            else:
+                # Fallback if pattern not in frequency plot
+                bar_colors.append('#808080')
+        
+        # If there are more single patterns, combine them
+        if len(sorted_single) > max_single_to_show:
+            remaining_single = sum(count for _, count in sorted_single[max_single_to_show:])
+            if remaining_single > 0:
+                bar_labels.append(f'Other Single ({len(sorted_single) - max_single_to_show} patterns)')
+                bar_sizes.append(remaining_single)
+                bar_colors.append('#999999')
+        
+        # Overlap (multiple patterns) - analyze specific combinations
+        if overlap > 0:
+            # Find all runs with multiple patterns and their combinations
+            overlap_runs = dataframe[pattern_mask >= 2]
+            overlap_combinations = {}
+            
+            for idx, row in overlap_runs.iterrows():
+                # Get which patterns are present (exclude strict patterns)
+                present_patterns = [p for p in non_strict_pattern_columns if row[p] == 1]
+                # Create a sorted tuple key for the combination
+                pattern_key = tuple(sorted(present_patterns))
+                if pattern_key not in overlap_combinations:
+                    overlap_combinations[pattern_key] = 0
+                overlap_combinations[pattern_key] += 1
+            
+            # Sort by frequency and show top combinations
+            sorted_overlaps = sorted(overlap_combinations.items(), key=lambda x: x[1], reverse=True)
+            max_overlaps_to_show = min(20, len(sorted_overlaps))  # Show top 20 combinations
+            
+            for pattern_combo, count in sorted_overlaps[:max_overlaps_to_show]:
+                # Format pattern names
+                pattern_names = [p.replace('_pattern', '').replace('layer', 'L') for p in pattern_combo]
+                if len(pattern_names) == 2:
+                    label = f"{pattern_names[0]} + {pattern_names[1]}"
+                elif len(pattern_names) == 3:
+                    label = f"{pattern_names[0]} + {pattern_names[1]} + {pattern_names[2]}"
+                else:
+                    # For 4+ patterns, show first 2 and count
+                    label = f"{pattern_names[0]} + {pattern_names[1]} + ... ({len(pattern_names)} total)"
+                
+                bar_labels.append(label)
+                bar_sizes.append(count)
+                # Blend colors of constituent patterns
+                combo_colors = [pattern_color_map.get(p, '#808080') for p in pattern_combo]
+                blended_color = blend_colors(combo_colors)
+                bar_colors.append(blended_color)
+            
+            # If there are more overlap combinations, combine them
+            if len(sorted_overlaps) > max_overlaps_to_show:
+                remaining_overlap = sum(count for _, count in sorted_overlaps[max_overlaps_to_show:])
+                if remaining_overlap > 0:
+                    bar_labels.append(f'Other Overlaps ({len(sorted_overlaps) - max_overlaps_to_show} combos)')
+                    bar_sizes.append(remaining_overlap)
+                    bar_colors.append('#999999')
+        
+        # Create horizontal bar chart
+        if bar_sizes:
+            # Calculate percentages
+            total = len(dataframe)
+            bar_percentages = [(size / total * 100) for size in bar_sizes]
+            
+            # Create horizontal bar chart (reverse order so highest is at top)
+            y_pos = range(len(bar_labels))
+            bars = ax2.barh(y_pos, bar_percentages, color=bar_colors, edgecolor='black', linewidth=0.5)
+            
+            # Add percentage and count labels on bars
+            for i, (bar, pct, size) in enumerate(zip(bars, bar_percentages, bar_sizes)):
+                # Label on the right side of bar
+                ax2.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height()/2,
+                        f'{pct:.1f}% ({size})', 
+                        ha='left', va='center', fontsize=8, fontweight='bold')
+            
+            # Set y-axis labels
+            ax2.set_yticks(y_pos)
+            ax2.set_yticklabels(bar_labels, fontsize=9)
+            ax2.invert_yaxis()  # Highest values at top
+            
+            # Labels and title
+            ax2.set_xlabel('Percentage of Runs (%)', fontsize=11)
+            ax2.set_title(f'Pattern Overlap Distribution\n(n={total} runs)', 
+                         fontsize=14, fontweight='bold')
+            ax2.grid(True, axis='x', alpha=0.3, linestyle='--')
+            
+            # Set x-axis limit to accommodate labels
+            max_pct = max(bar_percentages)
+            ax2.set_xlim(0, max_pct * 1.15)
+        else:
+            ax2.text(0.5, 0.5, 'No pattern data', ha='center', va='center', 
+                    transform=ax2.transAxes, fontsize=12)
+            ax2.set_title('Pattern Overlap Distribution', fontsize=14, fontweight='bold')
 
         plt.tight_layout()
         filename = os.path.join(output_folder, f'pattern_frequency_{suffix}.png')
@@ -770,12 +1057,17 @@ def create_pattern_plots(df, pattern_columns, output_folder=".", input_folder=""
     base_suffix = input_folder.replace('outputs/', '').replace('/', '_') if input_folder else "current"
     make_frequency_plot(df, base_suffix)
 
+    # Only create architecture-specific plots if there are multiple architectures
     if 'architecture' in df.columns:
-        for arch in sorted(df['architecture'].dropna().unique()):
-            subset = df[df['architecture'] == arch]
-            if subset.empty:
-                continue
-            make_frequency_plot(subset, f'{base_suffix}_{arch}')
+        unique_archs = df['architecture'].dropna().unique()
+        if len(unique_archs) > 1:
+            for arch in sorted(unique_archs):
+                subset = df[df['architecture'] == arch]
+                if subset.empty:
+                    continue
+                # Only create if subset is different from full dataset
+                if len(subset) < len(df):
+                    make_frequency_plot(subset, f'{base_suffix}_{arch}')
     
     create_pattern_examples(df, pattern_columns, output_folder, input_folder, subfolder)
 
@@ -804,278 +1096,385 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
             
         print(f"Creating examples for pattern: {pattern} ({len(pattern_runs)} runs)")
         
-        # Create subplot for this pattern
-        n_examples = min(6, len(pattern_runs))  # Show up to 6 examples
-        fig, axes = plt.subplots(3, n_examples, figsize=(4*n_examples, 14))
-        fig.suptitle(f'Pattern Examples: {pattern}', fontsize=16, fontweight='bold')
+        # Check if alignment data exists for this pattern
+        alignment_col = f'{pattern.replace("_pattern", "")}_pattern_boost_pattern_aligned'
+        alignment_diff_col = f'{pattern.replace("_pattern", "")}_pattern_boost_pattern_epoch_diff'
+        has_alignment = alignment_col in df.columns
         
-        # axes[0] accuracy, axes[1] raw gradients, axes[2] smoothed gradients
+        # Split runs by alignment if alignment data exists
+        aligned_runs = []
+        not_aligned_runs = []
+        if has_alignment:
+            for run_name in pattern_runs:
+                run_data = df[df['run_name'] == run_name]
+                if len(run_data) > 0:
+                    aligned_val = run_data.iloc[0][alignment_col]
+                    if aligned_val == 1:
+                        aligned_runs.append(run_name)
+                    else:
+                        not_aligned_runs.append(run_name)
+        else:
+            # If no alignment data, put all runs in aligned_runs (for backward compatibility)
+            aligned_runs = pattern_runs
         
         # Check if this pattern has a corresponding strict pattern
         strict_pattern_col = pattern.replace('_pattern', '_strict_pattern')
         has_strict = strict_pattern_col in df.columns
         
-        # Create title with strict pattern info
-        title = f'Pattern Examples: {pattern}'
-        if has_strict:
-            strict_count = df[strict_pattern_col].sum()
-            title += f' (Strict: {strict_count}/{len(df)})'
-        
-        for i in range(n_examples):
-            run_name = pattern_runs[i]
+        # Helper function to create a plot for a list of runs
+        def create_examples_plot(runs_list, category_name, category_suffix):
+            if len(runs_list) == 0:
+                return
             
-            # Find the run directory
-            # The run directories are always in outputs/, not in the input_folder
-            # input_folder is only used for the CSV location
-            if subfolder:
-                run_dir = os.path.join('outputs', subfolder, run_name)
+            n_examples = min(6, len(runs_list))
+            fig, axes = plt.subplots(3, n_examples, figsize=(4*n_examples, 14))
+            fig.suptitle(f'Pattern Examples: {pattern} - {category_name}', fontsize=16, fontweight='bold')
+            
+            # Normalize axes for n_examples == 1 (plt.subplots returns 1D array)
+            # For n_examples > 1, axes is already a 2D array (3, n_examples)
+            if n_examples == 1:
+                # Keep as 1D array - plt.subplots(3, 1) returns shape (3,)
+                axes = np.array(axes)
             else:
-                run_dir = os.path.join('outputs', run_name)
-
-            # Fallback: if computed path doesn't exist, try to locate the run anywhere under outputs/
-            if not os.path.isdir(run_dir):
-                import glob
-                candidates = glob.glob(os.path.join('outputs', '**', run_name), recursive=True)
-                if candidates:
-                    run_dir = candidates[0]
-                    print(f"Resolved run directory via fallback: {run_dir}")
-                else:
-                    print(f"Warning: Could not locate run directory for {run_name} under outputs/.")
-
-            # Try to load training history first, fall back to PNG if not available
-            history_file = os.path.join(run_dir, 'training_history.json')
-            gradient_png = os.path.join(run_dir, 'gradients.png')
+                # Ensure axes is a numpy array for consistent indexing
+                axes = np.array(axes)
             
-            if os.path.exists(history_file):
-                # Use raw data from training history
-                try:
-                    with open(history_file, 'r') as f:
-                        history = json.load(f)
-                    
-                    epochs = list(range(1, len(history['accuracy']) + 1))
-                    
-                    # Check if this run meets strict criteria
-                    is_strict = False
-                    if has_strict:
+            for i in range(n_examples):
+                run_name = runs_list[i]
+                # Get alignment diff for title
+                diff_text = ""
+                if has_alignment:
+                    run_data = df[df['run_name'] == run_name]
+                    if len(run_data) > 0 and alignment_diff_col in run_data.columns:
+                        diff_val = run_data.iloc[0][alignment_diff_col]
+                        if diff_val != -999:
+                            diff_text = f" (diff={int(diff_val)})"
+                
+                # Find the run directory
+                if subfolder:
+                    run_dir = os.path.join('outputs', subfolder, run_name)
+                else:
+                    run_dir = os.path.join('outputs', run_name)
+
+                # Fallback: if computed path doesn't exist, try to locate the run anywhere under outputs/
+                if not os.path.isdir(run_dir):
+                    import glob
+                    candidates = glob.glob(os.path.join('outputs', '**', run_name), recursive=True)
+                    if candidates:
+                        run_dir = candidates[0]
+                        print(f"Resolved run directory via fallback: {run_dir}")
+                    else:
+                        print(f"Warning: Could not locate run directory for {run_name} under outputs/.")
+
+                # Try to load training history first, fall back to PNG if not available
+                history_file = os.path.join(run_dir, 'training_history.json')
+                gradient_png = os.path.join(run_dir, 'gradients.png')
+                
+                if os.path.exists(history_file):
+                    # Use raw data from training history
+                    try:
+                        with open(history_file, 'r') as f:
+                            history = json.load(f)
+                        
+                        epochs = list(range(1, len(history['accuracy']) + 1))
+                        
+                        # Check if this run meets strict criteria
+                        is_strict = False
+                        if has_strict:
+                            run_data = df[df['run_name'] == run_name]
+                            if len(run_data) > 0:
+                                is_strict = run_data.iloc[0][strict_pattern_col] == 1
+                        
+                        # Get pattern detection epoch and accuracy boost epoch from CSV
                         run_data = df[df['run_name'] == run_name]
+                        pattern_epoch = None
+                        boost_epoch = None
                         if len(run_data) > 0:
-                            is_strict = run_data.iloc[0][strict_pattern_col] == 1
+                            # Pattern variable already includes '_pattern', so just add '_epoch'
+                            pattern_epoch_col = f'{pattern}_epoch'
+                            strict_pattern_epoch_col = pattern.replace('_pattern', '_strict_pattern_epoch')
+                            boost_epoch_col = f'{pattern}_accuracy_boost_epoch'
+                            
+                            if pattern_epoch_col in run_data.columns:
+                                pattern_epoch_val = run_data.iloc[0][pattern_epoch_col]
+                                if pattern_epoch_val != -1 and not pd.isna(pattern_epoch_val):
+                                    pattern_epoch = int(pattern_epoch_val) + 1  # Convert 0-indexed to 1-indexed
+                            # Also check for strict pattern epoch if available
+                            elif strict_pattern_epoch_col in run_data.columns:
+                                pattern_epoch_val = run_data.iloc[0][strict_pattern_epoch_col]
+                                if pattern_epoch_val != -1 and not pd.isna(pattern_epoch_val):
+                                    pattern_epoch = int(pattern_epoch_val) + 1  # Convert 0-indexed to 1-indexed
+                            
+                            if boost_epoch_col in run_data.columns:
+                                boost_epoch_val = run_data.iloc[0][boost_epoch_col]
+                                if boost_epoch_val != -1 and not pd.isna(boost_epoch_val):
+                                    boost_epoch = int(boost_epoch_val) + 1  # Convert 0-indexed to 1-indexed
+                        
+                        # Plot accuracy (top row)
+                        if n_examples == 1:
+                            axes[0].plot(epochs, history['accuracy'], label='Train Acc', linewidth=2, color='blue')
+                            if 'test_accuracy' in history and history['test_accuracy']:
+                                axes[0].plot(epochs, history['test_accuracy'], label='Test Acc', linewidth=2, color='red')
+                                
+                                # Add shaded area between epoch-1 and pattern detection epoch
+                                if pattern_epoch is not None and pattern_epoch > 1 and pattern_epoch <= len(epochs):
+                                    axes[0].axvspan(pattern_epoch - 1, pattern_epoch, alpha=0.2, color='gray', label='Pattern Transition')
+                                # Add vertical line for accuracy boost
+                                if boost_epoch is not None and boost_epoch <= len(epochs):
+                                    axes[0].axvline(x=boost_epoch, color='black', linestyle='--', linewidth=2, alpha=0.7, label='Boost Epoch')
+                                
+                            axes[0].set_xlabel('Epoch')
+                            axes[0].set_ylabel('Accuracy (%)')
+                            title = f'{run_name}\nAccuracy{diff_text}'
+                            if is_strict:
+                                title += ' [STRICT]'
+                            axes[0].set_title(title, fontsize=10, color='red' if is_strict else 'black')
+                            axes[0].legend(fontsize=8)
+                            axes[0].grid(True, alpha=0.3)
+                        else:
+                            axes[0, i].plot(epochs, history['accuracy'], label='Train Acc', linewidth=2, color='blue')
+                            if 'test_accuracy' in history and history['test_accuracy']:
+                                axes[0, i].plot(epochs, history['test_accuracy'], label='Test Acc', linewidth=2, color='red')
+                                
+                                # Add shaded area between epoch-1 and pattern detection epoch
+                                if pattern_epoch is not None and pattern_epoch > 1 and pattern_epoch <= len(epochs):
+                                    axes[0, i].axvspan(pattern_epoch - 1, pattern_epoch, alpha=0.2, color='gray', label='Transition')
+                                # Add vertical line for accuracy boost
+                                if boost_epoch is not None and boost_epoch <= len(epochs):
+                                    axes[0, i].axvline(x=boost_epoch, color='black', linestyle='--', linewidth=2, alpha=0.7, label='Boost')
+                                
+                            axes[0, i].set_xlabel('Epoch')
+                            axes[0, i].set_ylabel('Accuracy (%)')
+                            title = f'{run_name}\nAccuracy{diff_text}'
+                            if is_strict:
+                                title += ' [STRICT]'
+                            axes[0, i].set_title(title, fontsize=10, color='red' if is_strict else 'black')
+                            axes[0, i].legend(fontsize=8)
+                            axes[0, i].grid(True, alpha=0.3)
+                        
+                        # Plot raw and smoothed gradients (middle and bottom rows)
+                        gradient_epochs = history['gradients']['epoch']
+                        layer_names = _get_primary_layers_from_history(history)
+
+                        # Raw gradients
+                        for layer in layer_names:
+                            if layer in history['gradients']:
+                                series = history['gradients'][layer]
+                                if n_examples == 1:
+                                    axes[1].plot(
+                                        gradient_epochs,
+                                        series,
+                                        label=layer,
+                                        linewidth=2,
+                                        color=get_layer_color(layer),
+                                    )
+                                else:
+                                    axes[1, i].plot(
+                                        gradient_epochs,
+                                        series,
+                                        label=layer,
+                                        linewidth=2,
+                                        color=get_layer_color(layer),
+                                    )
+                        
+                        # Add shaded area and vertical line for accuracy boost on raw gradients
+                        if n_examples == 1:
+                            if pattern_epoch is not None and pattern_epoch > 1 and pattern_epoch >= min(gradient_epochs) and pattern_epoch <= max(gradient_epochs):
+                                axes[1].axvspan(pattern_epoch - 1, pattern_epoch, alpha=0.2, color='gray', label='Pattern Transition')
+                            if boost_epoch is not None and boost_epoch >= min(gradient_epochs) and boost_epoch <= max(gradient_epochs):
+                                axes[1].axvline(x=boost_epoch, color='black', linestyle='--', linewidth=2, alpha=0.7, label='Boost Epoch')
+                        else:
+                            if pattern_epoch is not None and pattern_epoch > 1 and pattern_epoch >= min(gradient_epochs) and pattern_epoch <= max(gradient_epochs):
+                                axes[1, i].axvspan(pattern_epoch - 1, pattern_epoch, alpha=0.2, color='gray', label='Transition')
+                            if boost_epoch is not None and boost_epoch >= min(gradient_epochs) and boost_epoch <= max(gradient_epochs):
+                                axes[1, i].axvline(x=boost_epoch, color='black', linestyle='--', linewidth=2, alpha=0.7, label='Boost')
+
+                        # Smoothed gradients
+                        for layer in layer_names:
+                            if layer in history['gradients']:
+                                series = history['gradients'][layer]
+                                series_s = smooth_gradients(series, 3)
+                                if n_examples == 1:
+                                    axes[2].plot(
+                                        gradient_epochs,
+                                        series_s,
+                                        label=layer,
+                                        linewidth=2,
+                                        color=get_layer_color(layer),
+                                    )
+                                else:
+                                    axes[2, i].plot(
+                                        gradient_epochs,
+                                        series_s,
+                                        label=layer,
+                                        linewidth=2,
+                                        color=get_layer_color(layer),
+                                    )
+                        
+                        # Add shaded area and vertical line for accuracy boost on smoothed gradients
+                        if n_examples == 1:
+                            if pattern_epoch is not None and pattern_epoch > 1 and pattern_epoch >= min(gradient_epochs) and pattern_epoch <= max(gradient_epochs):
+                                axes[2].axvspan(pattern_epoch - 1, pattern_epoch, alpha=0.2, color='gray', label='Pattern Transition')
+                            if boost_epoch is not None and boost_epoch >= min(gradient_epochs) and boost_epoch <= max(gradient_epochs):
+                                axes[2].axvline(x=boost_epoch, color='black', linestyle='--', linewidth=2, alpha=0.7, label='Boost Epoch')
+                        else:
+                            if pattern_epoch is not None and pattern_epoch > 1 and pattern_epoch >= min(gradient_epochs) and pattern_epoch <= max(gradient_epochs):
+                                axes[2, i].axvspan(pattern_epoch - 1, pattern_epoch, alpha=0.2, color='gray', label='Transition')
+                            if boost_epoch is not None and boost_epoch >= min(gradient_epochs) and boost_epoch <= max(gradient_epochs):
+                                axes[2, i].axvline(x=boost_epoch, color='black', linestyle='--', linewidth=2, alpha=0.7, label='Boost')
+
+                        if n_examples == 1:
+                            axes[1].set_xlabel('Epoch')
+                            axes[1].set_ylabel('Gradient Norm')
+                            title_mid = 'Gradients (raw)'
+                            if is_strict:
+                                title_mid += ' [STRICT]'
+                            axes[1].set_title(title_mid, fontsize=10, color='red' if is_strict else 'black')
+                            axes[1].legend(fontsize=8)
+                            axes[1].grid(True, alpha=0.3)
+
+                            axes[2].set_xlabel('Epoch')
+                            axes[2].set_ylabel('Gradient Norm')
+                            title_bot = 'Gradients (smoothed)'
+                            if is_strict:
+                                title_bot += ' [STRICT]'
+                            axes[2].set_title(title_bot, fontsize=10, color='red' if is_strict else 'black')
+                            axes[2].legend(fontsize=8)
+                            axes[2].grid(True, alpha=0.3)
+                        else:
+                            axes[1, i].set_xlabel('Epoch')
+                            axes[1, i].set_ylabel('Gradient Norm')
+                            title_mid = 'Gradients (raw)'
+                            if is_strict:
+                                title_mid += ' [STRICT]'
+                            axes[1, i].set_title(title_mid, fontsize=10, color='red' if is_strict else 'black')
+                            axes[1, i].legend(fontsize=8)
+                            axes[1, i].grid(True, alpha=0.3)
+
+                            axes[2, i].set_xlabel('Epoch')
+                            axes[2, i].set_ylabel('Gradient Norm')
+                            title_bot = 'Gradients (smoothed)'
+                            if is_strict:
+                                title_bot += ' [STRICT]'
+                            axes[2, i].set_title(title_bot, fontsize=10, color='red' if is_strict else 'black')
+                            axes[2, i].legend(fontsize=8)
+                            axes[2, i].grid(True, alpha=0.3)
                     
-                    # Plot accuracy (top row)
-                    if n_examples == 1:
-                        axes[0].plot(epochs, history['accuracy'], label='Train Acc', linewidth=2, color='blue')
-                        if 'test_accuracy' in history and history['test_accuracy']:
-                            axes[0].plot(epochs, history['test_accuracy'], label='Test Acc', linewidth=2, color='red')
-                        axes[0].set_xlabel('Epoch')
-                        axes[0].set_ylabel('Accuracy (%)')
-                        title = f'{run_name}\nAccuracy'
-                        if is_strict:
-                            title += ' [STRICT]'
-                        axes[0].set_title(title, fontsize=10, color='red' if is_strict else 'black')
-                        axes[0].legend(fontsize=8)
-                        axes[0].grid(True, alpha=0.3)
-                    else:
-                        axes[0, i].plot(epochs, history['accuracy'], label='Train Acc', linewidth=2, color='blue')
-                        if 'test_accuracy' in history and history['test_accuracy']:
-                            axes[0, i].plot(epochs, history['test_accuracy'], label='Test Acc', linewidth=2, color='red')
-                        axes[0, i].set_xlabel('Epoch')
-                        axes[0, i].set_ylabel('Accuracy (%)')
-                        title = f'{run_name}\nAccuracy'
-                        if is_strict:
-                            title += ' [STRICT]'
-                        axes[0, i].set_title(title, fontsize=10, color='red' if is_strict else 'black')
-                        axes[0, i].legend(fontsize=8)
-                        axes[0, i].grid(True, alpha=0.3)
-                    
-                    # Plot raw and smoothed gradients (middle and bottom rows)
-                    gradient_epochs = history['gradients']['epoch']
-                    layer_names = _get_primary_layers_from_history(history)
-
-                    # Raw gradients
-                    for layer in layer_names:
-                        if layer in history['gradients']:
-                            series = history['gradients'][layer]
-                            if n_examples == 1:
-                                axes[1].plot(
-                                    gradient_epochs,
-                                    series,
-                                    label=layer,
-                                    linewidth=2,
-                                    color=get_layer_color(layer),
-                                )
-                            else:
-                                axes[1, i].plot(
-                                    gradient_epochs,
-                                    series,
-                                    label=layer,
-                                    linewidth=2,
-                                    color=get_layer_color(layer),
-                                )
-
-                    # Smoothed gradients
-                    for layer in layer_names:
-                        if layer in history['gradients']:
-                            series = history['gradients'][layer]
-                            series_s = smooth_gradients(series, 3)
-                            if n_examples == 1:
-                                axes[2].plot(
-                                    gradient_epochs,
-                                    series_s,
-                                    label=layer,
-                                    linewidth=2,
-                                    color=get_layer_color(layer),
-                                )
-                            else:
-                                axes[2, i].plot(
-                                    gradient_epochs,
-                                    series_s,
-                                    label=layer,
-                                    linewidth=2,
-                                    color=get_layer_color(layer),
-                                )
-
-                    if n_examples == 1:
-                        axes[1].set_xlabel('Epoch')
-                        axes[1].set_ylabel('Gradient Norm')
-                        title_mid = 'Gradients (raw)'
-                        if is_strict:
-                            title_mid += ' [STRICT]'
-                        axes[1].set_title(title_mid, fontsize=10, color='red' if is_strict else 'black')
-                        axes[1].legend(fontsize=8)
-                        axes[1].grid(True, alpha=0.3)
-
-                        axes[2].set_xlabel('Epoch')
-                        axes[2].set_ylabel('Gradient Norm')
-                        title_bot = 'Gradients (smoothed)'
-                        if is_strict:
-                            title_bot += ' [STRICT]'
-                        axes[2].set_title(title_bot, fontsize=10, color='red' if is_strict else 'black')
-                        axes[2].legend(fontsize=8)
-                        axes[2].grid(True, alpha=0.3)
-                    else:
-                        axes[1, i].set_xlabel('Epoch')
-                        axes[1, i].set_ylabel('Gradient Norm')
-                        title_mid = 'Gradients (raw)'
-                        if is_strict:
-                            title_mid += ' [STRICT]'
-                        axes[1, i].set_title(title_mid, fontsize=10, color='red' if is_strict else 'black')
-                        axes[1, i].legend(fontsize=8)
-                        axes[1, i].grid(True, alpha=0.3)
-
-                        axes[2, i].set_xlabel('Epoch')
-                        axes[2, i].set_ylabel('Gradient Norm')
-                        title_bot = 'Gradients (smoothed)'
-                        if is_strict:
-                            title_bot += ' [STRICT]'
-                        axes[2, i].set_title(title_bot, fontsize=10, color='red' if is_strict else 'black')
-                        axes[2, i].legend(fontsize=8)
-                        axes[2, i].grid(True, alpha=0.3)
-                    
-                except Exception as e:
-                    if n_examples == 1:
-                        axes[0].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
-                                    ha='center', va='center', transform=axes[0].transAxes)
-                        axes[0].set_title(run_name, fontsize=10)
-                        axes[1].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
-                                    ha='center', va='center', transform=axes[1].transAxes)
-                        axes[1].set_title('Gradients', fontsize=10)
-                        axes[2].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
-                                    ha='center', va='center', transform=axes[2].transAxes)
-                        axes[2].set_title('Gradients', fontsize=10)
-                    else:
-                        axes[0, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
-                                        ha='center', va='center', transform=axes[0, i].transAxes)
-                        axes[0, i].set_title(run_name, fontsize=10)
-                        axes[1, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
-                                        ha='center', va='center', transform=axes[1, i].transAxes)
-                        axes[1, i].set_title('Gradients', fontsize=10)
-                        axes[2, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
-                                        ha='center', va='center', transform=axes[2, i].transAxes)
-                        axes[2, i].set_title('Gradients', fontsize=10)
-                    
-            elif os.path.exists(gradient_png):
-                # Fall back to existing PNG for gradients only
-                try:
-                    img = plt.imread(gradient_png)
-                    if n_examples == 1:
-                        axes[0].text(0.5, 0.5, f'No accuracy data\nfor {run_name}', 
-                                    ha='center', va='center', transform=axes[0].transAxes)
-                        axes[0].set_title(f'{run_name}\nAccuracy', fontsize=10)
-                        axes[1].imshow(img)
-                        axes[1].set_title('Gradients', fontsize=10)
-                        axes[1].axis('off')
-                        axes[2].imshow(img)
-                        axes[2].set_title('Gradients', fontsize=10)
-                        axes[2].axis('off')
-                    else:
-                        axes[0, i].text(0.5, 0.5, f'No accuracy data\nfor {run_name}', 
-                                        ha='center', va='center', transform=axes[0, i].transAxes)
-                        axes[0, i].set_title(f'{run_name}\nAccuracy', fontsize=10)
-                        axes[1, i].imshow(img)
-                        axes[1, i].set_title('Gradients', fontsize=10)
-                        axes[1, i].axis('off')
-                        axes[2, i].imshow(img)
-                        axes[2, i].set_title('Gradients', fontsize=10)
-                        axes[2, i].axis('off')
-                except Exception as e:
-                    if n_examples == 1:
-                        axes[0].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
-                                    ha='center', va='center', transform=axes[0].transAxes)
-                        axes[0].set_title(f'{run_name}\nAccuracy', fontsize=10)
-                        axes[1].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
-                                    ha='center', va='center', transform=axes[1].transAxes)
-                        axes[1].set_title('Gradients', fontsize=10)
-                        axes[2].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
-                                    ha='center', va='center', transform=axes[2].transAxes)
-                        axes[2].set_title('Gradients', fontsize=10)
-                    else:
-                        axes[0, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
-                                        ha='center', va='center', transform=axes[0, i].transAxes)
-                        axes[0, i].set_title(f'{run_name}\nAccuracy', fontsize=10)
-                        axes[1, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
-                                        ha='center', va='center', transform=axes[1, i].transAxes)
-                        axes[1, i].set_title('Gradients', fontsize=10)
-                        axes[2, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
-                                        ha='center', va='center', transform=axes[2, i].transAxes)
-                        axes[2, i].set_title('Gradients', fontsize=10)
-            else:
-                # No data available
-                if n_examples == 1:
-                    axes[0].text(0.5, 0.5, f'No data\nfor {run_name}', 
-                                ha='center', va='center', transform=axes[0].transAxes)
-                    axes[0].set_title(f'{run_name}\nAccuracy', fontsize=10)
-                    axes[1].text(0.5, 0.5, f'No data\nfor {run_name}', 
-                                ha='center', va='center', transform=axes[1].transAxes)
-                    axes[1].set_title('Gradients', fontsize=10)
-                    axes[2].text(0.5, 0.5, f'No data\nfor {run_name}', 
-                                ha='center', va='center', transform=axes[2].transAxes)
-                    axes[2].set_title('Gradients', fontsize=10)
+                    except Exception as e:
+                        if n_examples == 1:
+                            axes[0].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                        ha='center', va='center', transform=axes[0].transAxes)
+                            axes[0].set_title(run_name, fontsize=10)
+                            axes[1].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                        ha='center', va='center', transform=axes[1].transAxes)
+                            axes[1].set_title('Gradients', fontsize=10)
+                            axes[2].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                        ha='center', va='center', transform=axes[2].transAxes)
+                            axes[2].set_title('Gradients', fontsize=10)
+                        else:
+                            axes[0, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                            ha='center', va='center', transform=axes[0, i].transAxes)
+                            axes[0, i].set_title(run_name, fontsize=10)
+                            axes[1, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                            ha='center', va='center', transform=axes[1, i].transAxes)
+                            axes[1, i].set_title('Gradients', fontsize=10)
+                            axes[2, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                            ha='center', va='center', transform=axes[2, i].transAxes)
+                            axes[2, i].set_title('Gradients', fontsize=10)
+                
+                elif os.path.exists(gradient_png):
+                    # Fall back to existing PNG for gradients only
+                    try:
+                        img = plt.imread(gradient_png)
+                        if n_examples == 1:
+                            axes[0].text(0.5, 0.5, f'No accuracy data\nfor {run_name}', 
+                                        ha='center', va='center', transform=axes[0].transAxes)
+                            axes[0].set_title(f'{run_name}\nAccuracy', fontsize=10)
+                            axes[1].imshow(img)
+                            axes[1].set_title('Gradients', fontsize=10)
+                            axes[1].axis('off')
+                            axes[2].imshow(img)
+                            axes[2].set_title('Gradients', fontsize=10)
+                            axes[2].axis('off')
+                        else:
+                            axes[0, i].text(0.5, 0.5, f'No accuracy data\nfor {run_name}', 
+                                            ha='center', va='center', transform=axes[0, i].transAxes)
+                            axes[0, i].set_title(f'{run_name}\nAccuracy', fontsize=10)
+                            axes[1, i].imshow(img)
+                            axes[1, i].set_title('Gradients', fontsize=10)
+                            axes[1, i].axis('off')
+                            axes[2, i].imshow(img)
+                            axes[2, i].set_title('Gradients', fontsize=10)
+                            axes[2, i].axis('off')
+                    except Exception as e:
+                        if n_examples == 1:
+                            axes[0].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                        ha='center', va='center', transform=axes[0].transAxes)
+                            axes[0].set_title(f'{run_name}\nAccuracy', fontsize=10)
+                            axes[1].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                        ha='center', va='center', transform=axes[1].transAxes)
+                            axes[1].set_title('Gradients', fontsize=10)
+                            axes[2].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                        ha='center', va='center', transform=axes[2].transAxes)
+                            axes[2].set_title('Gradients', fontsize=10)
+                        else:
+                            axes[0, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                            ha='center', va='center', transform=axes[0, i].transAxes)
+                            axes[0, i].set_title(f'{run_name}\nAccuracy', fontsize=10)
+                            axes[1, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                            ha='center', va='center', transform=axes[1, i].transAxes)
+                            axes[1, i].set_title('Gradients', fontsize=10)
+                            axes[2, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                            ha='center', va='center', transform=axes[2, i].transAxes)
+                            axes[2, i].set_title('Gradients', fontsize=10)
                 else:
-                    axes[0, i].text(0.5, 0.5, f'No data\nfor {run_name}', 
-                                    ha='center', va='center', transform=axes[0, i].transAxes)
-                    axes[0, i].set_title(f'{run_name}\nAccuracy', fontsize=10)
-                    axes[1, i].text(0.5, 0.5, f'No data\nfor {run_name}', 
-                                    ha='center', va='center', transform=axes[1, i].transAxes)
-                    axes[1, i].set_title('Gradients', fontsize=10)
-                    axes[2, i].text(0.5, 0.5, f'No data\nfor {run_name}', 
+                    # No data available
+                    if n_examples == 1:
+                        axes[0].text(0.5, 0.5, f'No data\nfor {run_name}', 
+                                    ha='center', va='center', transform=axes[0].transAxes)
+                        axes[0].set_title(f'{run_name}\nAccuracy', fontsize=10)
+                        axes[1].text(0.5, 0.5, f'No data\nfor {run_name}', 
+                                    ha='center', va='center', transform=axes[1].transAxes)
+                        axes[1].set_title('Gradients', fontsize=10)
+                        axes[2].text(0.5, 0.5, f'No data\nfor {run_name}', 
+                                    ha='center', va='center', transform=axes[2].transAxes)
+                        axes[2].set_title('Gradients', fontsize=10)
+                    else:
+                        axes[0, i].text(0.5, 0.5, f'No data\nfor {run_name}', 
+                                        ha='center', va='center', transform=axes[0, i].transAxes)
+                        axes[0, i].set_title(f'{run_name}\nAccuracy', fontsize=10)
+                        axes[1, i].text(0.5, 0.5, f'No data\nfor {run_name}', 
+                                        ha='center', va='center', transform=axes[1, i].transAxes)
+                        axes[1, i].set_title('Gradients', fontsize=10)
+                        axes[2, i].text(0.5, 0.5, f'No data\nfor {run_name}', 
                                     ha='center', va='center', transform=axes[2, i].transAxes)
-                    axes[2, i].set_title('Gradients', fontsize=10)
+                        axes[2, i].set_title('Gradients', fontsize=10)
+            
+            # Hide unused subplots
+            if n_examples < 6 and len(axes.shape) > 1:
+                for i in range(n_examples, axes.shape[1]):
+                    axes[0, i].set_visible(False)
+                    axes[1, i].set_visible(False)
+                    axes[2, i].set_visible(False)
+            
+            plt.tight_layout()
+            
+            # Save plot
+            title_suffix = input_folder.replace('outputs/', '').replace('/', '_') if input_folder else "current"
+            filename = os.path.join(output_folder, f'pattern_examples_{pattern}_{category_suffix}_{title_suffix}.png')
+            plt.savefig(filename, dpi=300, bbox_inches='tight')
+            plt.close()
+            print(f"Pattern examples plot saved to: {filename}")
         
-        # Hide unused subplots if we have fewer than 6 examples
-        if n_examples < 6 and len(axes.shape) > 1:
-            for i in range(n_examples, axes.shape[1]):
-                axes[0, i].set_visible(False)
-                axes[1, i].set_visible(False)
-                axes[2, i].set_visible(False)
-        
-        plt.tight_layout()
-        
-        # Save plot
-        title_suffix = input_folder.replace('outputs/', '').replace('/', '_') if input_folder else "current"
-        filename = os.path.join(output_folder, f'pattern_examples_{pattern}_{title_suffix}.png')
-        plt.savefig(filename, dpi=300, bbox_inches='tight')
-        plt.close()
-        print(f"Pattern examples plot saved to: {filename}")
+        # Call helper function for aligned and not aligned separately
+        if has_alignment:
+            # Create plot for aligned examples
+            create_examples_plot(aligned_runs, "Aligned (±3 epochs)", "aligned")
+            # Create plot for not aligned examples
+            create_examples_plot(not_aligned_runs, "Not Aligned", "not_aligned")
+        else:
+            # No alignment data - use original behavior
+            create_examples_plot(aligned_runs, "", "")
 
 def create_no_pattern_examples(df, output_folder=".", input_folder="", subfolder="", title_suffix="", n_examples=6):
     """Create a plot of runs that have no patterns at all (all *_pattern == 0)."""
