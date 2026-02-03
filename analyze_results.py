@@ -173,6 +173,16 @@ def main():
     for pattern, count in pattern_counts.items():
         percentage = (count / len(df)) * 100
         print(f"  {pattern}: {count}/{len(df)} runs ({percentage:.1f}%)")
+        
+        # Show alignment breakdown for patterns that have runs
+        if count > 0:
+            pattern_runs = df[df[pattern] == 1]
+            alignment_col = f'{pattern.replace("_pattern", "")}_pattern_boost_pattern_aligned'
+            if alignment_col in df.columns:
+                aligned = pattern_runs[alignment_col].sum()
+                not_aligned = len(pattern_runs) - aligned
+                aligned_pct = (aligned / count * 100) if count > 0 else 0
+                print(f"    └─ Aligned: {aligned}/{count} ({aligned_pct:.1f}%), Not aligned: {not_aligned}/{count} ({100-aligned_pct:.1f}%)")
     
     # Show runs with most patterns
     df['pattern_count'] = df[pattern_columns].sum(axis=1)

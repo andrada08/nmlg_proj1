@@ -859,29 +859,81 @@ def create_pattern_plots(df, pattern_columns, output_folder=".", input_folder=""
                 pattern_color_map[pattern] = fallback_colors[fallback_idx % len(fallback_colors)]
                 fallback_idx += 1
         
-        # Left subplot: Pattern frequency horizontal bar chart
+        # Left subplot: Pattern frequency horizontal bar chart with alignment breakdown
         pattern_percentages = (pattern_counts / len(dataframe)) * 100
         y_pos = range(len(pattern_counts))
-        # Assign colors based on pattern
+        
+        # Calculate aligned vs not aligned for each pattern
+        aligned_counts = []
+        not_aligned_counts = []
+        aligned_percentages = []
+        not_aligned_percentages = []
+        
+        for pattern in pattern_counts.index:
+            pattern_runs = dataframe[dataframe[pattern] == 1]
+            count = len(pattern_runs)
+            alignment_col = f'{pattern.replace("_pattern", "")}_pattern_boost_pattern_aligned'
+            
+            if count > 0 and alignment_col in dataframe.columns:
+                aligned = pattern_runs[alignment_col].sum()
+                not_aligned = count - aligned
+                aligned_counts.append(aligned)
+                not_aligned_counts.append(not_aligned)
+                aligned_percentages.append((aligned / len(dataframe)) * 100)
+                not_aligned_percentages.append((not_aligned / len(dataframe)) * 100)
+            else:
+                # No alignment data available
+                aligned_counts.append(0)
+                not_aligned_counts.append(count)
+                aligned_percentages.append(0)
+                not_aligned_percentages.append((count / len(dataframe)) * 100)
+        
+        # Create stacked horizontal bars
         freq_colors = [pattern_color_map[p] for p in pattern_counts.index]
-        bars = ax1.barh(y_pos, pattern_percentages, color=freq_colors, edgecolor='black', linewidth=0.5)
+        # Use lighter/darker shades for aligned vs not aligned
+        import matplotlib.colors as mcolors
+        aligned_colors = [mcolors.to_rgba(c, alpha=0.7) for c in freq_colors]
+        not_aligned_colors = [mcolors.to_rgba(c, alpha=0.4) for c in freq_colors]
+        
+        # Stack bars: aligned on left (bottom), not aligned on right (top)
+        bars_aligned = ax1.barh(y_pos, aligned_percentages, color=aligned_colors, 
+                               edgecolor='black', linewidth=0.5, label='Aligned')
+        bars_not_aligned = ax1.barh(y_pos, not_aligned_percentages, left=aligned_percentages,
+                                    color=not_aligned_colors, edgecolor='black', linewidth=0.5, 
+                                    label='Not Aligned')
+        
         ax1.set_xlabel('Percentage of Runs (%)', fontsize=11)
         ax1.set_ylabel('Patterns')
-        ax1.set_title(f'Pattern Frequency Across All Runs - {suffix}', fontsize=14, fontweight='bold')
+        ax1.set_title(f'Pattern Frequency (Aligned vs Not Aligned) - {suffix}', fontsize=14, fontweight='bold')
         ax1.set_yticks(y_pos)
         ax1.set_yticklabels(pattern_counts.index, fontsize=9)
         ax1.invert_yaxis()  # Highest values at top
         
         # Add percentage and count labels on bars
-        for i, (bar, pct, count) in enumerate(zip(bars, pattern_percentages, pattern_counts)):
-            ax1.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height()/2,
+        for i, (pct, count, aligned, not_aligned) in enumerate(zip(pattern_percentages, pattern_counts, 
+                                                                   aligned_counts, not_aligned_counts)):
+            # Label on the right side of the total bar
+            ax1.text(pct + 0.5, i,
                     f'{pct:.1f}% ({count})', 
                     ha='left', va='center', fontsize=9, fontweight='bold')
+            # Add alignment breakdown label if there are aligned runs
+            if aligned > 0:
+                aligned_pct = (aligned / len(dataframe)) * 100
+                ax1.text(aligned_pct / 2, i,
+                        f'{aligned}', 
+                        ha='center', va='center', fontsize=8, color='white', fontweight='bold')
+            if not_aligned > 0:
+                not_aligned_pct = (not_aligned / len(dataframe)) * 100
+                not_aligned_x = aligned_percentages[i] + not_aligned_pct / 2
+                ax1.text(not_aligned_x, i,
+                        f'{not_aligned}', 
+                        ha='center', va='center', fontsize=8, color='white', fontweight='bold')
         
         # Set x-axis limit to accommodate labels
         max_pct = max(pattern_percentages)
         ax1.set_xlim(0, max_pct * 1.15)
         ax1.grid(True, axis='x', alpha=0.3, linestyle='--')
+        ax1.legend(loc='lower right', fontsize=9)
         
         # Right subplot: Pattern overlap pie chart
         # Analyze pattern overlaps (exclude strict patterns)
