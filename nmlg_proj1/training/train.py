@@ -2,14 +2,19 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-def train_with_gradient_tracking(model, trainloader, testloader, 
-                                epochs, ln_rate,
-                                optimizer, device,
-                                layer_lns: dict | None = None,
+
+def train_with_gradient_tracking(
+    model,
+    trainloader,
+    testloader,
+    epochs,
+    ln_rate,
+    optimizer,
+    device,
+    layer_lns: dict | None = None,
 ):
-    
     model = model.to(device)
-    
+
     layer_names = model.get_layer_names()
 
     if layer_lns:
@@ -20,25 +25,24 @@ def train_with_gradient_tracking(model, trainloader, testloader,
                     f"Layer '{name}' specified in layer_lns not found in model. "
                     f"Available layers: {', '.join(layer_names)}"
                 )
-            groups.append({'params': getattr(model, name).parameters(), 'lr': lr})
+            groups.append({"params": getattr(model, name).parameters(), "lr": lr})
         # Add remaining layers with default learning rate
         for layer_name in layer_names:
             if layer_name not in layer_lns:
-                groups.append({'params': getattr(model, layer_name).parameters(), 'lr': ln_rate})
+                groups.append(
+                    {"params": getattr(model, layer_name).parameters(), "lr": ln_rate}
+                )
         opt = optimizer(groups)  # per-group lrs set above
     else:
         opt = optimizer(model.parameters(), lr=ln_rate)
     criterion = nn.CrossEntropyLoss()
 
     history = {
-        'loss': [],
-        'accuracy': [],
-        'test_loss': [],
-        'test_accuracy': [],
-        'gradients': {
-            'epoch': [],
-            **{name: [] for name in layer_names}
-        }
+        "loss": [],
+        "accuracy": [],
+        "test_loss": [],
+        "test_accuracy": [],
+        "gradients": {"epoch": [], **{name: [] for name in layer_names}},
     }
 
     for epoch in range(epochs):
@@ -50,7 +54,7 @@ def train_with_gradient_tracking(model, trainloader, testloader,
         train_total = 0
         for batch_idx, (data, target) in enumerate(trainloader):
             data, target = data.to(device), target.to(device)
-            
+
             opt.zero_grad()
             output = model(data)
             loss = criterion(output, target)
@@ -66,8 +70,8 @@ def train_with_gradient_tracking(model, trainloader, testloader,
                 # store gradients
                 for layer_name in layer_names:
                     if layer_name in gradient_norms:
-                        history['gradients'][layer_name].append(gradient_norms[layer_name])
-                history['gradients']['epoch'].append(epoch+1)
+                        history["gradients"][layer_name].append(gradient_norms[layer_name])
+                history["gradients"]["epoch"].append(epoch + 1)
                 first_batch = False
                 print("logged grads for epoch ", epoch + 1)
 
@@ -100,14 +104,15 @@ def train_with_gradient_tracking(model, trainloader, testloader,
         test_accuracy = 100.0 * test_correct / test_total
 
         # store metrics
-        history['loss'].append(train_loss)
-        history['accuracy'].append(train_accuracy)
-        history['test_loss'].append(test_loss)
-        history['test_accuracy'].append(test_accuracy)
-        print(f"Epoch {epoch+1}/{epochs} | "
-              f"Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%, "
-              f"Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%")
-    
-    return history
+        history["loss"].append(train_loss)
+        history["accuracy"].append(train_accuracy)
+        history["test_loss"].append(test_loss)
+        history["test_accuracy"].append(test_accuracy)
+        print(
+            f"Epoch {epoch+1}/{epochs} | "
+            f"Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%, "
+            f"Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%"
+        )
 
+    return history
 

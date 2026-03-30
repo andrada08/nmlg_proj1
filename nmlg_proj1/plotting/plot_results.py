@@ -1129,7 +1129,7 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
     import os
     import json
     import matplotlib.pyplot as plt
-    from gradient_analysis import compute_layer_parameter_counts
+    from nmlg_proj1.analysis.gradient_analysis import compute_layer_parameter_counts
     
     for pattern in pattern_columns:
         # Find runs that have this pattern
@@ -1642,7 +1642,7 @@ def create_no_pattern_examples(df, output_folder=".", input_folder="", subfolder
     import matplotlib.pyplot as plt
     import numpy as np
     import glob
-    from gradient_analysis import compute_layer_parameter_counts
+    from nmlg_proj1.analysis.gradient_analysis import compute_layer_parameter_counts
 
     # Identify pattern columns (includes strict patterns as well)
     pattern_columns = [col for col in df.columns if col.endswith('_pattern')]

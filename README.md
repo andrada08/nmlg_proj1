@@ -1,63 +1,64 @@
 ## nmlg_proj1
-In-progress research code for running small neural-network architecture sweeps and analyzing training dynamics (especially gradient-norm patterns and “accuracy boost” style events). 
+In-progress research code for running small neural-network architecture sweeps and analyzing training dynamics (gradient-norm patterns and “accuracy boost” style events).
 
-## Repository overview
-- `main.py`: train a model from a JSON config and write run artifacts to `outputs/`
-- `train.py`: training loop used by `main.py`
-- `nets.py`: model definitions + `build_model(...)`
-- `load_data.py`: dataset loading (MNIST-style)
-- `run_sweep.py`: run many configs in a sweep
-- `generate_sweep_*.py`: generate config JSONs for sweeps
-- `analyze_results.py`: aggregate runs and compute metrics from saved training history
-- `gradient_analysis.py`: gradient metrics / pattern logic
-- `plot_results.py`: plotting utilities for aggregated results and example runs
+## Layout
+
+- `nmlg_proj1/models/`: architectures (`build_model(...)`)
+- `nmlg_proj1/training/`: training loop
+- `nmlg_proj1/data/`: dataset loading (MNIST-style)
+- `nmlg_proj1/analysis/`: metrics + analysis
+- `nmlg_proj1/plotting/`: plotting code (including `first_epoch/`)
+- `nmlg_proj1/sweeps/`: sweep generators + sweep utilities
 
 ## Quickstart
-Create a virtual environment and install dependencies:
-```
+
+Create a virtual environment and install dependencies (not pinned yet):
+
+```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install torch torchvision numpy matplotlib pandas
+pip install torch torchvision numpy matplotlib pandas seaborn
 ```
 
-### Run a single experiment
-```
-python main.py --config configs/<subfolder>/<config>.json
-```
-Outputs are written under outputs/ (ignored by git).
+## Train one run
 
-### Run a sweep
-Generate configs (example):
-```
-python generate_sweep_three_layer_skip_conv_uniform_lr.py --subfolder three_layer_skip_conv_uniform_lr
+```bash
+python3 -m nmlg_proj1.training.run_one configs/<subfolder>/<config>.json
 ```
 
-Run the sweep:
-```
-python run_sweep.py --subfolder three_layer_skip_conv_uniform_lr --output-subfolder three_layer_skip_conv_uniform_lr
+Outputs are written under `outputs/` (ignored by git).
+
+## Run a sweep
+
+Generate configs (examples):
+
+```bash
+python3 -m nmlg_proj1.sweeps.generators.generate_sweep_three_layer_skip --subfolder three_layer_skip_all_sweeps
+python3 -m nmlg_proj1.sweeps.generators.generate_sweep_three_layer_skip_conv_uniform_lr --subfolder three_layer_skip_conv_uniform_lr
 ```
 
-### Analysis / plots
-Aggregate results and compute gradient-pattern metrics:
+Run:
+
+```bash
+python3 -m nmlg_proj1.sweeps.run_sweep --subfolder <subfolder> --output-subfolder <subfolder>
 ```
-python analyze_results.py
+
+## Analyze + plot
+
+```bash
+python3 -m nmlg_proj1.analysis.analyze_results --output-subfolder <subfolder>
+python3 -m nmlg_proj1.plotting.plot_results --pattern-analysis --input-folder results/<subfolder>
 ```
-Plot utilities live in plot_results.py (the exact entrypoints vary as the project evolves).
 
-### Config notes (current)
-Common keys used across configs:
-- architecture (e.g. three_layer_skip)
-- input_size (e.g. 784), output_size (e.g. 10)
-- hidden_sizes (e.g. [h1, h2, h3])
-- activation (e.g. relu)
-- optimizer (e.g. Adam)
-- ln_rate (default learning rate)
-- layer_lns (per-layer LR overrides)
+## First-epoch activation/gradient tracking (optional)
 
-**Optional** (currently only supported for three_layer_skip):
-- layer_types (choose conv/linear for early layers), e.g. { "layer1": "conv", "layer2": "linear" }
+```bash
+python3 -m nmlg_proj1.analysis.first_epoch.run_activation_tracking --subfolder <subfolder>
+python3 -m nmlg_proj1.analysis.first_epoch.analyze_activations_gradients_first_epoch --subfolder <subfolder>
+python3 -m nmlg_proj1.plotting.first_epoch.plot_activations_gradients_first_epoch --subfolder <subfolder>
+```
 
-## What is not tracked
+## What is (not) tracked
+
 This repo ignores generated artifacts and local environment folders:
-
-ignored: outputs/, results/, configs/, data/, .venv/, __pycache__/
+- ignored: `outputs/`, `results/`, `configs/`, `data/`, `.venv/`, `__pycache__/`
