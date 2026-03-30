@@ -40,6 +40,7 @@ output_size = cfg['output_size']
 layer_lns = cfg.get('layer_lns')
 activation = cfg['activation']
 architecture = cfg.get('architecture', 'three_layer_skip')
+layer_types = cfg.get('layer_types', None)
 
 # define output folder: use config filename as folder name
 base_tag = os.path.splitext(os.path.basename(config_path))[0]
@@ -64,6 +65,7 @@ model = build_model(
     hidden_sizes=tuple(hidden_sizes),
     output_size=output_size,
     activation=activation,
+    layer_types=layer_types,
 )
 
 # train
