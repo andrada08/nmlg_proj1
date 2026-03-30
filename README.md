@@ -1,5 +1,5 @@
 ## nmlg_proj1
-In-progress research code for running small neural-network architecture sweeps and analyzing training dynamics (gradient-norm patterns and “accuracy boost” style events).
+In-progress research code for analysing how gradient dynamics evolve during training in small neural networks across parameter sweeps. It supports multiple architectures and sweep dimensions (per-layer learning rates, layer sizes, and layer types), tracks gradients across training, and quantifies recurring patterns with several metrics.
 
 ## Layout
 
@@ -50,24 +50,6 @@ python3 -m nmlg_proj1.analysis.analyze_results --output-subfolder <subfolder>
 python3 -m nmlg_proj1.plotting.plot_results --pattern-analysis --input-folder results/<subfolder>
 ```
 
-## Example results
-
-### Summary
-
-![Pattern frequency (three-layer skip)](assets/plots/pattern_frequency_results_three_layer_skip_all_sweeps_three_layer_skip.png)
-
-![Pattern frequency (four-layer integrating)](assets/plots/pattern_frequency_results_four_layer_integrating_all_sweeps.png)
-
-![Pattern analysis (layer3 vs layer2, three-layer skip)](assets/plots/pattern_analysis_layer3vslayer2_pattern_three_layer_skip_all_sweeps.png)
-
-![Pattern analysis (layer4 vs layer3, four-layer integrating)](assets/plots/pattern_analysis_layer4vslayer3_pattern_four_layer_integrating_all_sweeps.png)
-
-### Examples
-
-![Pattern-aligned example (layer3 vs layer2, three-layer skip)](assets/plots/pattern_examples_layer3vslayer2_pattern_aligned_results_three_layer_skip_all_sweeps.png)
-
-![Pattern-not-aligned example (layer4 vs layer3, four-layer integrating)](assets/plots/pattern_examples_layer4vslayer3_pattern_not_aligned_results_four_layer_integrating_all_sweeps.png)
-
 ## First-epoch activation/gradient tracking (optional)
 
 ```bash
@@ -75,6 +57,27 @@ python3 -m nmlg_proj1.analysis.first_epoch.run_activation_tracking --subfolder <
 python3 -m nmlg_proj1.analysis.first_epoch.analyze_activations_gradients_first_epoch --subfolder <subfolder>
 python3 -m nmlg_proj1.plotting.first_epoch.plot_activations_gradients_first_epoch --subfolder <subfolder>
 ```
+
+## Example results
+
+### Summary pattern frequency (grouped by alignment to accuracy boost)
+
+![Pattern frequency (three-layer skip)](assets/plots/pattern_frequency_results_three_layer_skip_all_sweeps_three_layer_skip.png)
+
+![Pattern frequency (four-layer integrating)](assets/plots/pattern_frequency_results_four_layer_integrating_all_sweeps.png)
+
+### Summary correlation with other metrics
+
+![Pattern analysis (layer3 vs layer2, three-layer skip)](assets/plots/pattern_analysis_layer3vslayer2_pattern_three_layer_skip_all_sweeps.png)
+
+![Pattern analysis (layer4 vs layer3, four-layer integrating)](assets/plots/pattern_analysis_layer4vslayer3_pattern_four_layer_integrating_all_sweeps.png)
+
+### Examples of patterns (in aligned and misaligned cases)
+
+![Pattern-aligned example (layer3 vs layer2, three-layer skip)](assets/plots/pattern_examples_layer3vslayer2_pattern_aligned_results_three_layer_skip_all_sweeps.png)
+
+![Pattern-not-aligned example (layer4 vs layer3, four-layer integrating)](assets/plots/pattern_examples_layer4vslayer3_pattern_not_aligned_results_four_layer_integrating_all_sweeps.png)
+
 
 ## What is (not) tracked
 
