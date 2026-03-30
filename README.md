@@ -50,6 +50,24 @@ python3 -m nmlg_proj1.analysis.analyze_results --output-subfolder <subfolder>
 python3 -m nmlg_proj1.plotting.plot_results --pattern-analysis --input-folder results/<subfolder>
 ```
 
+## Example results
+
+### Summary
+
+![Pattern frequency (three-layer skip)](assets/plots/pattern_frequency_results_three_layer_skip_all_sweeps_three_layer_skip.png)
+
+![Pattern frequency (four-layer integrating)](assets/plots/pattern_frequency_results_four_layer_integrating_all_sweeps.png)
+
+![Pattern analysis (layer3 vs layer2, three-layer skip)](assets/plots/pattern_analysis_layer3vslayer2_pattern_three_layer_skip_all_sweeps.png)
+
+![Pattern analysis (layer4 vs layer3, four-layer integrating)](assets/plots/pattern_analysis_layer4vslayer3_pattern_four_layer_integrating_all_sweeps.png)
+
+### Examples
+
+![Pattern-aligned example (layer3 vs layer2, three-layer skip)](assets/plots/pattern_examples_layer3vslayer2_pattern_aligned_results_three_layer_skip_all_sweeps.png)
+
+![Pattern-not-aligned example (layer4 vs layer3, four-layer integrating)](assets/plots/pattern_examples_layer4vslayer3_pattern_not_aligned_results_four_layer_integrating_all_sweeps.png)
+
 ## First-epoch activation/gradient tracking (optional)
 
 ```bash
