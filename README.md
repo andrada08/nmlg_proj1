@@ -61,21 +61,24 @@ python3 -m nmlg_proj1.plotting.first_epoch.plot_activations_gradients_first_epoc
 ## Example results
 
 ### Summary pattern frequency (grouped by alignment to accuracy boost)
-
+**Three-layer skip architecture:**
 ![Pattern frequency (three-layer skip)](assets/plots/pattern_frequency_results_three_layer_skip_all_sweeps_three_layer_skip.png)
 
+**Four-layer integrating architecture:**
 ![Pattern frequency (four-layer integrating)](assets/plots/pattern_frequency_results_four_layer_integrating_all_sweeps.png)
 
 ### Summary correlation with other metrics
-
+**Three-layer skip architecture:**
 ![Pattern analysis (layer3 vs layer2, three-layer skip)](assets/plots/pattern_analysis_layer3vslayer2_pattern_three_layer_skip_all_sweeps.png)
 
+**Four-layer integrating architecture:**
 ![Pattern analysis (layer4 vs layer3, four-layer integrating)](assets/plots/pattern_analysis_layer4vslayer3_pattern_four_layer_integrating_all_sweeps.png)
 
 ### Examples of patterns (in aligned and misaligned cases)
-
+**Three-layer skip architecture:**
 ![Pattern-aligned example (layer3 vs layer2, three-layer skip)](assets/plots/pattern_examples_layer3vslayer2_pattern_aligned_results_three_layer_skip_all_sweeps.png)
 
+**Four-layer integrating architecture:**
 ![Pattern-not-aligned example (layer4 vs layer3, four-layer integrating)](assets/plots/pattern_examples_layer4vslayer3_pattern_not_aligned_results_four_layer_integrating_all_sweeps.png)
 
 
