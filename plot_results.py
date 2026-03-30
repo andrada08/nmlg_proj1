@@ -1129,6 +1129,7 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
     import os
     import json
     import matplotlib.pyplot as plt
+    from gradient_analysis import compute_layer_parameter_counts
     
     for pattern in pattern_columns:
         # Find runs that have this pattern
@@ -1179,13 +1180,13 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                 return
             
             n_examples = min(6, len(runs_list))
-            fig, axes = plt.subplots(3, n_examples, figsize=(4*n_examples, 14))
+            fig, axes = plt.subplots(4, n_examples, figsize=(4*n_examples, 18))
             fig.suptitle(f'Pattern Examples: {pattern} - {category_name}', fontsize=16, fontweight='bold')
             
             # Normalize axes for n_examples == 1 (plt.subplots returns 1D array)
-            # For n_examples > 1, axes is already a 2D array (3, n_examples)
+            # For n_examples > 1, axes is already a 2D array (4, n_examples)
             if n_examples == 1:
-                # Keep as 1D array - plt.subplots(3, 1) returns shape (3,)
+                # Keep as 1D array - plt.subplots(4, 1) returns shape (4,)
                 axes = np.array(axes)
             else:
                 # Ensure axes is a numpy array for consistent indexing
@@ -1220,6 +1221,7 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
 
                 # Try to load training history first, fall back to PNG if not available
                 history_file = os.path.join(run_dir, 'training_history.json')
+                config_file = os.path.join(run_dir, 'config.json')
                 gradient_png = os.path.join(run_dir, 'gradients.png')
                 
                 if os.path.exists(history_file):
@@ -1227,6 +1229,12 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                     try:
                         with open(history_file, 'r') as f:
                             history = json.load(f)
+                        
+                        # Load config for per-parameter gradient computation
+                        config = None
+                        if os.path.exists(config_file):
+                            with open(config_file, 'r') as f:
+                                config = json.load(f)
                         
                         epochs = list(range(1, len(history['accuracy']) + 1))
                         
@@ -1304,11 +1312,22 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                             axes[0, i].legend(fontsize=8)
                             axes[0, i].grid(True, alpha=0.3)
                         
-                        # Plot raw and smoothed gradients (middle and bottom rows)
+                        # Plot raw, smoothed, and per-parameter gradients (rows 1, 2, 3)
                         gradient_epochs = history['gradients']['epoch']
                         layer_names = _get_primary_layers_from_history(history)
 
-                        # Raw gradients
+                        # Compute per-parameter gradients if config is available
+                        per_param_grads = {}
+                        if config:
+                            param_counts = compute_layer_parameter_counts(config)
+                            for layer in layer_names:
+                                if layer in history['gradients'] and layer in param_counts:
+                                    num_params = param_counts[layer]
+                                    if num_params > 0:
+                                        raw_grads = history['gradients'][layer]
+                                        per_param_grads[layer] = [g / (num_params ** 0.5) for g in raw_grads]
+
+                        # Raw gradients (row 1)
                         for layer in layer_names:
                             if layer in history['gradients']:
                                 series = history['gradients'][layer]
@@ -1341,7 +1360,7 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                             if boost_epoch is not None and boost_epoch >= min(gradient_epochs) and boost_epoch <= max(gradient_epochs):
                                 axes[1, i].axvline(x=boost_epoch, color='black', linestyle='--', linewidth=2, alpha=0.7, label='Boost')
 
-                        # Smoothed gradients
+                        # Smoothed gradients (row 2)
                         for layer in layer_names:
                             if layer in history['gradients']:
                                 series = history['gradients'][layer]
@@ -1375,6 +1394,41 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                             if boost_epoch is not None and boost_epoch >= min(gradient_epochs) and boost_epoch <= max(gradient_epochs):
                                 axes[2, i].axvline(x=boost_epoch, color='black', linestyle='--', linewidth=2, alpha=0.7, label='Boost')
 
+                        # Per-parameter gradients (row 3) - smoothed
+                        if per_param_grads:
+                            for layer in layer_names:
+                                if layer in per_param_grads:
+                                    series = per_param_grads[layer]
+                                    series_s = smooth_gradients(series, 3)
+                                    if n_examples == 1:
+                                        axes[3].plot(
+                                            gradient_epochs,
+                                            series_s,
+                                            label=layer,
+                                            linewidth=2,
+                                            color=get_layer_color(layer),
+                                        )
+                                    else:
+                                        axes[3, i].plot(
+                                            gradient_epochs,
+                                            series_s,
+                                            label=layer,
+                                            linewidth=2,
+                                            color=get_layer_color(layer),
+                                        )
+                            
+                            # Add shaded area and vertical line for accuracy boost on per-parameter gradients
+                            if n_examples == 1:
+                                if pattern_epoch is not None and pattern_epoch > 1 and pattern_epoch >= min(gradient_epochs) and pattern_epoch <= max(gradient_epochs):
+                                    axes[3].axvspan(pattern_epoch - 1, pattern_epoch, alpha=0.2, color='gray', label='Pattern Transition')
+                                if boost_epoch is not None and boost_epoch >= min(gradient_epochs) and boost_epoch <= max(gradient_epochs):
+                                    axes[3].axvline(x=boost_epoch, color='black', linestyle='--', linewidth=2, alpha=0.7, label='Boost Epoch')
+                            else:
+                                if pattern_epoch is not None and pattern_epoch > 1 and pattern_epoch >= min(gradient_epochs) and pattern_epoch <= max(gradient_epochs):
+                                    axes[3, i].axvspan(pattern_epoch - 1, pattern_epoch, alpha=0.2, color='gray', label='Transition')
+                                if boost_epoch is not None and boost_epoch >= min(gradient_epochs) and boost_epoch <= max(gradient_epochs):
+                                    axes[3, i].axvline(x=boost_epoch, color='black', linestyle='--', linewidth=2, alpha=0.7, label='Boost')
+
                         if n_examples == 1:
                             axes[1].set_xlabel('Epoch')
                             axes[1].set_ylabel('Gradient Norm')
@@ -1393,6 +1447,20 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                             axes[2].set_title(title_bot, fontsize=10, color='red' if is_strict else 'black')
                             axes[2].legend(fontsize=8)
                             axes[2].grid(True, alpha=0.3)
+                            
+                            if per_param_grads:
+                                axes[3].set_xlabel('Epoch')
+                                axes[3].set_ylabel('Gradient Norm / √params')
+                                title_per_param = 'Gradients (per-parameter, smoothed)'
+                                if is_strict:
+                                    title_per_param += ' [STRICT]'
+                                axes[3].set_title(title_per_param, fontsize=10, color='red' if is_strict else 'black')
+                                axes[3].legend(fontsize=8)
+                                axes[3].grid(True, alpha=0.3)
+                            else:
+                                axes[3].text(0.5, 0.5, 'No config data\nfor per-param gradients', 
+                                            ha='center', va='center', transform=axes[3].transAxes)
+                                axes[3].set_title('Gradients (per-parameter)', fontsize=10)
                         else:
                             axes[1, i].set_xlabel('Epoch')
                             axes[1, i].set_ylabel('Gradient Norm')
@@ -1411,6 +1479,20 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                             axes[2, i].set_title(title_bot, fontsize=10, color='red' if is_strict else 'black')
                             axes[2, i].legend(fontsize=8)
                             axes[2, i].grid(True, alpha=0.3)
+                            
+                            if per_param_grads:
+                                axes[3, i].set_xlabel('Epoch')
+                                axes[3, i].set_ylabel('Gradient Norm / √params')
+                                title_per_param = 'Gradients (per-parameter, smoothed)'
+                                if is_strict:
+                                    title_per_param += ' [STRICT]'
+                                axes[3, i].set_title(title_per_param, fontsize=10, color='red' if is_strict else 'black')
+                                axes[3, i].legend(fontsize=8)
+                                axes[3, i].grid(True, alpha=0.3)
+                            else:
+                                axes[3, i].text(0.5, 0.5, 'No config data\nfor per-param gradients', 
+                                               ha='center', va='center', transform=axes[3, i].transAxes)
+                                axes[3, i].set_title('Gradients (per-parameter)', fontsize=10)
                     
                     except Exception as e:
                         if n_examples == 1:
@@ -1423,6 +1505,9 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                             axes[2].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
                                         ha='center', va='center', transform=axes[2].transAxes)
                             axes[2].set_title('Gradients', fontsize=10)
+                            axes[3].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                        ha='center', va='center', transform=axes[3].transAxes)
+                            axes[3].set_title('Gradients', fontsize=10)
                         else:
                             axes[0, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
                                             ha='center', va='center', transform=axes[0, i].transAxes)
@@ -1433,6 +1518,9 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                             axes[2, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
                                             ha='center', va='center', transform=axes[2, i].transAxes)
                             axes[2, i].set_title('Gradients', fontsize=10)
+                            axes[3, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                            ha='center', va='center', transform=axes[3, i].transAxes)
+                            axes[3, i].set_title('Gradients', fontsize=10)
                 
                 elif os.path.exists(gradient_png):
                     # Fall back to existing PNG for gradients only
@@ -1448,6 +1536,9 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                             axes[2].imshow(img)
                             axes[2].set_title('Gradients', fontsize=10)
                             axes[2].axis('off')
+                            axes[3].text(0.5, 0.5, 'No per-param data', 
+                                        ha='center', va='center', transform=axes[3].transAxes)
+                            axes[3].set_title('Gradients (per-parameter)', fontsize=10)
                         else:
                             axes[0, i].text(0.5, 0.5, f'No accuracy data\nfor {run_name}', 
                                             ha='center', va='center', transform=axes[0, i].transAxes)
@@ -1458,6 +1549,9 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                             axes[2, i].imshow(img)
                             axes[2, i].set_title('Gradients', fontsize=10)
                             axes[2, i].axis('off')
+                            axes[3, i].text(0.5, 0.5, 'No per-param data', 
+                                            ha='center', va='center', transform=axes[3, i].transAxes)
+                            axes[3, i].set_title('Gradients (per-parameter)', fontsize=10)
                     except Exception as e:
                         if n_examples == 1:
                             axes[0].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
@@ -1469,6 +1563,9 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                             axes[2].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
                                         ha='center', va='center', transform=axes[2].transAxes)
                             axes[2].set_title('Gradients', fontsize=10)
+                            axes[3].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                        ha='center', va='center', transform=axes[3].transAxes)
+                            axes[3].set_title('Gradients', fontsize=10)
                         else:
                             axes[0, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
                                             ha='center', va='center', transform=axes[0, i].transAxes)
@@ -1479,6 +1576,9 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                             axes[2, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
                                             ha='center', va='center', transform=axes[2, i].transAxes)
                             axes[2, i].set_title('Gradients', fontsize=10)
+                            axes[3, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', 
+                                            ha='center', va='center', transform=axes[3, i].transAxes)
+                            axes[3, i].set_title('Gradients', fontsize=10)
                 else:
                     # No data available
                     if n_examples == 1:
@@ -1491,6 +1591,9 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                         axes[2].text(0.5, 0.5, f'No data\nfor {run_name}', 
                                     ha='center', va='center', transform=axes[2].transAxes)
                         axes[2].set_title('Gradients', fontsize=10)
+                        axes[3].text(0.5, 0.5, f'No data\nfor {run_name}', 
+                                    ha='center', va='center', transform=axes[3].transAxes)
+                        axes[3].set_title('Gradients', fontsize=10)
                     else:
                         axes[0, i].text(0.5, 0.5, f'No data\nfor {run_name}', 
                                         ha='center', va='center', transform=axes[0, i].transAxes)
@@ -1501,6 +1604,9 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                         axes[2, i].text(0.5, 0.5, f'No data\nfor {run_name}', 
                                     ha='center', va='center', transform=axes[2, i].transAxes)
                         axes[2, i].set_title('Gradients', fontsize=10)
+                        axes[3, i].text(0.5, 0.5, f'No data\nfor {run_name}', 
+                                    ha='center', va='center', transform=axes[3, i].transAxes)
+                        axes[3, i].set_title('Gradients', fontsize=10)
             
             # Hide unused subplots
             if n_examples < 6 and len(axes.shape) > 1:
@@ -1508,6 +1614,7 @@ def create_pattern_examples(df, pattern_columns, output_folder=".", input_folder
                     axes[0, i].set_visible(False)
                     axes[1, i].set_visible(False)
                     axes[2, i].set_visible(False)
+                    axes[3, i].set_visible(False)
             
             plt.tight_layout()
             
@@ -1535,6 +1642,7 @@ def create_no_pattern_examples(df, output_folder=".", input_folder="", subfolder
     import matplotlib.pyplot as plt
     import numpy as np
     import glob
+    from gradient_analysis import compute_layer_parameter_counts
 
     # Identify pattern columns (includes strict patterns as well)
     pattern_columns = [col for col in df.columns if col.endswith('_pattern')]
@@ -1552,13 +1660,13 @@ def create_no_pattern_examples(df, output_folder=".", input_folder="", subfolder
     n_examples = min(n_examples, len(run_names))
     print(f"Creating examples for runs without any pattern ({len(run_names)} found, showing {n_examples})")
 
-    # Build figure: 3 rows (accuracy, raw gradients, smoothed gradients) x n_examples columns
-    fig, axes = plt.subplots(3, n_examples, figsize=(4*n_examples, 14))
+    # Build figure: 4 rows (accuracy, raw gradients, smoothed gradients, per-parameter gradients) x n_examples columns
+    fig, axes = plt.subplots(4, n_examples, figsize=(4*n_examples, 18))
     fig.suptitle(f'No-Pattern Examples: {title_suffix}', fontsize=16, fontweight='bold')
 
     # Normalize axes access for n_examples==1
     if n_examples == 1:
-        axes = np.array(axes).reshape(3, 1)
+        axes = np.array(axes).reshape(4, 1)
 
     for i in range(n_examples):
         run_name = run_names[i]
@@ -1578,11 +1686,18 @@ def create_no_pattern_examples(df, output_folder=".", input_folder="", subfolder
                 print(f"Warning: Could not locate run directory for {run_name} under outputs/.")
 
         history_file = os.path.join(run_dir, 'training_history.json')
+        config_file = os.path.join(run_dir, 'config.json')
 
         if os.path.exists(history_file):
             try:
                 with open(history_file, 'r') as f:
                     history = json.load(f)
+                
+                # Load config for per-parameter gradient computation
+                config = None
+                if os.path.exists(config_file):
+                    with open(config_file, 'r') as f:
+                        config = json.load(f)
 
                 epochs = list(range(1, len(history.get('accuracy', [])) + 1))
 
@@ -1600,11 +1715,23 @@ def create_no_pattern_examples(df, output_folder=".", input_folder="", subfolder
                     axes[0, i].text(0.5, 0.5, 'No accuracy data', ha='center', va='center', transform=axes[0, i].transAxes)
                     axes[0, i].set_title(f'{run_name}\n(No accuracy)')
 
-                # Gradients plots: raw (middle), smoothed (bottom)
+                # Gradients plots: raw (row 1), smoothed (row 2), per-parameter (row 3)
                 if 'gradients' in history and len(history['gradients'].get('epoch', [])) > 0:
                     grad_epochs = history['gradients']['epoch']
                     layer_names = _get_primary_layers_from_history(history)
-                    # Raw
+                    
+                    # Compute per-parameter gradients if config is available
+                    per_param_grads = {}
+                    if config:
+                        param_counts = compute_layer_parameter_counts(config)
+                        for layer in layer_names:
+                            if layer in history['gradients'] and layer in param_counts:
+                                num_params = param_counts[layer]
+                                if num_params > 0:
+                                    raw_grads = history['gradients'][layer]
+                                    per_param_grads[layer] = [g / (num_params ** 0.5) for g in raw_grads]
+                    
+                    # Raw (row 1)
                     for layer in layer_names:
                         if layer in history['gradients']:
                             axes[1, i].plot(
@@ -1620,7 +1747,7 @@ def create_no_pattern_examples(df, output_folder=".", input_folder="", subfolder
                     axes[1, i].legend(fontsize=8)
                     axes[1, i].grid(True, alpha=0.3)
 
-                    # Smoothed (3-epoch)
+                    # Smoothed (row 2)
                     for layer in layer_names:
                         if layer in history['gradients']:
                             series = history['gradients'][layer]
@@ -1636,17 +1763,44 @@ def create_no_pattern_examples(df, output_folder=".", input_folder="", subfolder
                     axes[2, i].set_title('Gradients (smoothed)', fontsize=10)
                     axes[2, i].legend(fontsize=8)
                     axes[2, i].grid(True, alpha=0.3)
+                    
+                    # Per-parameter (row 3) - smoothed
+                    if per_param_grads:
+                        for layer in layer_names:
+                            if layer in per_param_grads:
+                                series = per_param_grads[layer]
+                                axes[3, i].plot(
+                                    grad_epochs,
+                                    smooth_gradients(series, 3),
+                                    label=layer,
+                                    linewidth=2,
+                                    color=get_layer_color(layer),
+                                )
+                        axes[3, i].set_xlabel('Epoch')
+                        axes[3, i].set_ylabel('Gradient Norm / √params')
+                        axes[3, i].set_title('Gradients (per-parameter, smoothed)', fontsize=10)
+                        axes[3, i].legend(fontsize=8)
+                        axes[3, i].grid(True, alpha=0.3)
+                    else:
+                        axes[3, i].text(0.5, 0.5, 'No config data\nfor per-param gradients', 
+                                       ha='center', va='center', transform=axes[3, i].transAxes)
+                        axes[3, i].set_title('Gradients (per-parameter)', fontsize=10)
                 else:
                     axes[1, i].text(0.5, 0.5, 'No gradient data', ha='center', va='center', transform=axes[1, i].transAxes)
                     axes[1, i].set_title('Gradients (No data)', fontsize=10)
                     axes[2, i].text(0.5, 0.5, 'No gradient data', ha='center', va='center', transform=axes[2, i].transAxes)
                     axes[2, i].set_title('Gradients (No data)', fontsize=10)
+                    axes[3, i].text(0.5, 0.5, 'No gradient data', ha='center', va='center', transform=axes[3, i].transAxes)
+                    axes[3, i].set_title('Gradients (No data)', fontsize=10)
             except Exception as e:
                 axes[0, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', ha='center', va='center', transform=axes[0, i].transAxes)
                 axes[0, i].set_title(run_name, fontsize=10)
                 axes[1, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', ha='center', va='center', transform=axes[1, i].transAxes)
                 axes[1, i].set_title('Gradients', fontsize=10)
                 axes[2, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', ha='center', va='center', transform=axes[2, i].transAxes)
+                axes[2, i].set_title('Gradients', fontsize=10)
+                axes[3, i].text(0.5, 0.5, f'Error loading\n{run_name}\n{str(e)}', ha='center', va='center', transform=axes[3, i].transAxes)
+                axes[3, i].set_title('Gradients', fontsize=10)
 
     plt.tight_layout()
     filename = os.path.join(output_folder, f'no_pattern_examples_{title_suffix}.png')
