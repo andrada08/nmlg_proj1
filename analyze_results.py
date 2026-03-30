@@ -125,8 +125,8 @@ def main():
             # Extract hyperparameters
             hyperparams = extract_hyperparams(config)
             
-            # Compute gradient metrics from training history
-            metrics = compute_gradient_metrics(training_history)
+            # Compute gradient metrics from training history (pass config for per-parameter analysis)
+            metrics = compute_gradient_metrics(training_history, config=config)
             
             # Create row for this run
             row = {

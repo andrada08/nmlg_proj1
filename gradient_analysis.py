@@ -4,7 +4,70 @@
 from itertools import combinations
 
 
-def compute_gradient_metrics(training_history):
+def compute_layer_parameter_counts(config):
+    """
+    Compute parameter counts for each layer based on config.
+    Returns a dictionary mapping layer_name -> num_parameters
+    """
+    param_counts = {}
+    
+    architecture = config.get('architecture', 'three_layer_skip')
+    input_size = config.get('input_size', 784)
+    hidden_sizes = config.get('hidden_sizes', [])
+    output_size = config.get('output_size', 10)
+    layer_types = config.get('layer_types', {})
+    
+    if architecture != 'three_layer_skip':
+        # For other architectures, we'd need to implement their parameter counting
+        # For now, return empty dict and skip per-parameter analysis
+        return param_counts
+    
+    if len(hidden_sizes) < 3:
+        return param_counts
+    
+    h1, h2, h3 = hidden_sizes[0], hidden_sizes[1], hidden_sizes[2]
+    layer1_type = layer_types.get('layer1', 'linear')
+    layer2_type = layer_types.get('layer2', 'linear')
+    
+    # Default conv parameters
+    conv_kernel_size = 3
+    
+    # Layer1
+    if layer1_type == 'conv':
+        param_counts['layer1'] = 1 * h1 * conv_kernel_size * conv_kernel_size
+        layer1_output_size = h1 * 28 * 28  # With padding=1, spatial size stays 28x28
+    else:  # linear
+        param_counts['layer1'] = input_size * h1
+        layer1_output_size = h1
+    
+    # Layer2
+    if layer2_type == 'conv':
+        if layer1_type == 'conv':
+            param_counts['layer2'] = h1 * h2 * conv_kernel_size * conv_kernel_size
+            layer2_output_size = h2 * 28 * 28
+        else:  # linear -> conv
+            # This case is complex, approximate
+            spatial_dim = 14  # Default assumption
+            param_counts['layer2'] = 1 * h2 * conv_kernel_size * conv_kernel_size
+            layer2_output_size = h2 * spatial_dim * spatial_dim
+    else:  # linear
+        if layer1_type == 'conv':
+            param_counts['layer2'] = layer1_output_size * h2
+        else:  # linear -> linear
+            param_counts['layer2'] = h1 * h2
+        layer2_output_size = h2
+    
+    # Skip connections (always linear)
+    param_counts['layer3_from_1'] = layer1_output_size * h3
+    param_counts['layer3_from_2'] = layer2_output_size * h3
+    
+    # Layer3 (always linear, final output)
+    param_counts['layer3'] = h3 * output_size
+    
+    return param_counts
+
+
+def compute_gradient_metrics(training_history, config=None):
     """
     Compute gradient metrics from training history data.
     This should be called post-hoc in analyze_results.py
@@ -55,10 +118,35 @@ def compute_gradient_metrics(training_history):
 
     gradients = training_history['gradients']
 
+    # Get main layers (exclude skip connections)
     main_layers = [
         name
         for name in gradients
         if name != 'epoch' and 'from' not in name
+    ]
+    
+    # Compute per-parameter gradients post-hoc if config is provided
+    if config is not None:
+        param_counts = compute_layer_parameter_counts(config)
+        if param_counts:
+            # Add per-parameter gradients to the gradients dict
+            for layer_name in main_layers:
+                if layer_name in param_counts and layer_name in gradients:
+                    num_params = param_counts[layer_name]
+                    if num_params > 0:
+                        # Compute per-parameter norm: raw_norm / sqrt(num_params)
+                        raw_grads = gradients[layer_name]
+                        per_param_grads = [g / (num_params ** 0.5) for g in raw_grads]
+                        gradients[f'{layer_name}_per_param'] = per_param_grads
+    
+    # Filter out per_param versions from main_layers (they'll be analyzed separately)
+    main_layers = [name for name in main_layers if not name.endswith('_per_param')]
+    
+    # Get per-parameter layer names (either from computed or existing)
+    main_layers_per_param = [
+        name.replace('_per_param', '')
+        for name in gradients
+        if name.endswith('_per_param')
     ]
 
     if len(main_layers) < 2:
@@ -384,5 +472,97 @@ def compute_gradient_metrics(training_history):
         metrics['final_train_accuracy'] = training_history['accuracy'][-1]
     if 'test_accuracy' in training_history and training_history['test_accuracy']:
         metrics['final_test_accuracy'] = training_history['test_accuracy'][-1]
+    
+    # Now analyze per-parameter gradients if available
+    if main_layers_per_param and len(main_layers_per_param) >= 2:
+        # Get per-parameter gradients
+        grads_per_param_by_layer = {
+            layer: gradients[f'{layer}_per_param'] 
+            for layer in main_layers_per_param 
+            if f'{layer}_per_param' in gradients
+        }
+        
+        if len(grads_per_param_by_layer) >= 2:
+            # Sort layers
+            main_layers_per_param_sorted = sorted(main_layers_per_param, key=layer_sort_key)
+            
+            # Smooth per-parameter gradients
+            smoothed_grads_per_param = {
+                layer: smooth(vals, smooth_window) 
+                for layer, vals in grads_per_param_by_layer.items()
+            }
+            
+            if all(len(vals) >= 2 for vals in smoothed_grads_per_param.values()):
+                # Large drops for per-parameter gradients
+                drops_per_param = {}
+                for layer, grads in grads_per_param_by_layer.items():
+                    layer_drops = [
+                        (grads[i - 1] - grads[i]) / grads[i - 1]
+                        for i in range(1, len(grads))
+                        if grads[i - 1] > 0
+                    ]
+                    drops_per_param[layer] = layer_drops
+                    metrics[f'{layer}_per_param_large_drop'] = 1 if any(drop > drop_threshold for drop in layer_drops) else 0
+                
+                # Pairwise metrics for per-parameter gradients
+                for layer_a, layer_b in combinations(main_layers_per_param_sorted, 2):
+                    if layer_a not in smoothed_grads_per_param or layer_b not in smoothed_grads_per_param:
+                        continue
+                    
+                    sm_a = smoothed_grads_per_param[layer_a]
+                    sm_b = smoothed_grads_per_param[layer_b]
+                    n = min(len(sm_a), len(sm_b))
+                    if n < 2:
+                        continue
+                    
+                    # Directional comparisons
+                    metrics[f'{layer_a}_per_param_above_{layer_b}'] = 1 if any(gt_margin(sm_a[i], sm_b[i], epsilon_rel) for i in range(n)) else 0
+                    metrics[f'{layer_b}_per_param_above_{layer_a}'] = 1 if any(gt_margin(sm_b[i], sm_a[i], epsilon_rel) for i in range(n)) else 0
+                    
+                    # Switches
+                    switches_ab = switches(sm_a, sm_b)
+                    metrics[f'per_param_switches_{layer_a}_{layer_b}'] = 1 if switches_ab > 0 else 0
+                    
+                    # Temporal order
+                    temporal_order_ab_result = temporal_order(sm_a, sm_b)
+                    temporal_order_ba_result = temporal_order(sm_b, sm_a)
+                    metrics[f'{layer_a}_per_param_vs_{layer_b}_temporal_order'] = temporal_order_ab_result[0]
+                    metrics[f'{layer_b}_per_param_vs_{layer_a}_temporal_order'] = temporal_order_ba_result[0]
+                    
+                    # Composite patterns
+                    pattern_ab_result = check_pattern_composite(
+                        metrics[f'{layer_a}_per_param_above_{layer_b}'],
+                        metrics[f'{layer_b}_per_param_above_{layer_a}'],
+                        metrics[f'per_param_switches_{layer_a}_{layer_b}'],
+                        metrics[f'{layer_a}_per_param_large_drop'],
+                        temporal_order_ab_result,
+                    )
+                    pattern_ba_result = check_pattern_composite(
+                        metrics[f'{layer_b}_per_param_above_{layer_a}'],
+                        metrics[f'{layer_a}_per_param_above_{layer_b}'],
+                        metrics[f'per_param_switches_{layer_a}_{layer_b}'],
+                        metrics[f'{layer_b}_per_param_large_drop'],
+                        temporal_order_ba_result,
+                    )
+                    metrics[f'{layer_a}_per_param_vs_{layer_b}_pattern'] = pattern_ab_result[0]
+                    metrics[f'{layer_b}_per_param_vs_{layer_a}_pattern'] = pattern_ba_result[0]
+                    metrics[f'{layer_a}_per_param_vs_{layer_b}_pattern_epoch'] = pattern_ab_result[1] if pattern_ab_result[1] is not None else -1
+                    metrics[f'{layer_b}_per_param_vs_{layer_a}_pattern_epoch'] = pattern_ba_result[1] if pattern_ba_result[1] is not None else -1
+                    
+                    # Strict patterns
+                    strict_ab_result = check_pattern_strict(sm_a, sm_b, drops_per_param[layer_a])
+                    strict_ba_result = check_pattern_strict(sm_b, sm_a, drops_per_param[layer_b])
+                    metrics[f'{layer_a}_per_param_vs_{layer_b}_strict_pattern'] = strict_ab_result[0]
+                    metrics[f'{layer_b}_per_param_vs_{layer_a}_strict_pattern'] = strict_ba_result[0]
+                    metrics[f'{layer_a}_per_param_vs_{layer_b}_strict_pattern_epoch'] = strict_ab_result[1] if strict_ab_result[1] is not None else -1
+                    metrics[f'{layer_b}_per_param_vs_{layer_a}_strict_pattern_epoch'] = strict_ba_result[1] if strict_ba_result[1] is not None else -1
+                    
+                    # Strict patterns must be subset of composite patterns
+                    if metrics[f'{layer_a}_per_param_vs_{layer_b}_pattern'] == 0:
+                        metrics[f'{layer_a}_per_param_vs_{layer_b}_strict_pattern'] = 0
+                        strict_ab_result = (0, None)
+                    if metrics[f'{layer_b}_per_param_vs_{layer_a}_pattern'] == 0:
+                        metrics[f'{layer_b}_per_param_vs_{layer_a}_strict_pattern'] = 0
+                        strict_ba_result = (0, None)
     
     return metrics
